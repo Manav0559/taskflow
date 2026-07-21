@@ -167,7 +167,7 @@ func createJob(t *testing.T, baseURL, token string, body map[string]any) *model.
 	if err != nil {
 		t.Fatalf("POST /v1/jobs: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /v1/jobs: expected 201, got %d", resp.StatusCode)
