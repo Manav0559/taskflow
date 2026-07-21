@@ -120,6 +120,27 @@ mode in practice, but it does mean leader election has zero autonomy from the da
 plane. A system that needed leader election to survive its primary datastore being
 unavailable would need etcd/ZooKeeper instead.
 
+**Verified for real, not just designed**: ran two scheduler replicas against the same
+Postgres, confirmed via `taskflow_scheduler_is_leader` which one held the lock,
+inserted a job and watched the leader's log promote it. Then `kill -9`'d the leader
+process mid-run (no graceful shutdown) and confirmed the standby's
+`taskflow_scheduler_is_leader` flipped to 1 within ~3s (the session-scoped advisory
+lock releasing the instant the holder's connection died), then inserted a second job
+and confirmed the *new* leader's log promoted it — failover isn't just a metric
+flipping, the standby actually resumes real promotion work. See
+[VERIFICATION.md](VERIFICATION.md#leader-election-failover).
+
+This test also surfaced a real bug: starting both scheduler replicas at once made them
+race on `RunMigrations` and one crashed with a Postgres catalog error
+(`duplicate key value violates unique constraint "pg_type_typname_nsp_index"`) -
+`RunMigrations` had no locking between "check if a migration is applied" and "apply
+it," so two concurrent callers could both see a migration as pending and both try to
+execute its DDL. Fixed by wrapping the whole migration run in a second
+`pg_advisory_lock` (key `727433002`, distinct from the promotion leader lock) so
+concurrent starts serialize instead of racing - directly relevant since this project's
+own k8s manifests run 2 replicas of every service, meaning every real rollout hits this
+exact race on cold start.
+
 ## CAP framing
 
 The job-metadata path — create, promote, lease — is deliberately **CP-leaning**: a
