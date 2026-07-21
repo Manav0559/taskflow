@@ -17,6 +17,10 @@ spec:
           # Real deploys should reference a registry-qualified image (e.g.
           # <account>.dkr.ecr.<region>.amazonaws.com/taskflow-api:<tag>), not :latest.
           image: taskflow-api:latest
+          # IfNotPresent (not the default Always) so a locally-built/pre-loaded image
+          # (kind load docker-image, or an immutable digest-pinned tag in prod) is used
+          # as-is instead of the kubelet always attempting a registry pull.
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
               name: http

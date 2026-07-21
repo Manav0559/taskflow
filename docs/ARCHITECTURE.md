@@ -236,6 +236,30 @@ if the primary dies (no automatic failover/consensus like Patroni or a cloud-man
 Postgres would provide) - a real production setup would need that on top of what's
 here.
 
+## Kubernetes deployment
+
+`k8s/api-deployment.yaml`, `k8s/worker-deployment.yaml`, and
+`k8s/scheduler-deployment.yaml` (Deployments + a Service + HPAs for api/worker) were
+applied to a real local cluster (`kind`), not just written and left unproven:
+
+- Built the three images, loaded them into the cluster's node (`kind load
+  docker-image`), applied the manifests against a throwaway in-cluster Postgres.
+- All 6 pods (2 api, 2 worker, 2 scheduler) reached `Running`/`1/1 Ready`.
+- Port-forwarded to the `taskflow-api` Service and created a job through the real
+  HTTP path — it was promoted and executed, and the run's `leased_by` field showed the
+  actual pod name (`taskflow-worker-c55468f7-kvrz7-1`), confirming multi-replica
+  leasing works correctly across real pods, not just across goroutines in one process.
+- Installed `metrics-server` (not bundled with vanilla `kind`) and confirmed the HPAs
+  went from `cpu: <unknown>/70%` to real readings (`cpu: 27%/70%`, `cpu: 26%/70%`) -
+  the autoscaler is reading live metrics, not just configured on paper.
+
+One real bug surfaced and got fixed by this: the manifests originally left
+`imagePullPolicy` at its default (`Always`), which made the kubelet ignore the
+locally-loaded image and fail with `ImagePullBackOff`. Fixed by setting
+`imagePullPolicy: IfNotPresent` on all three containers - this also matters for any
+real deployment using immutable, pre-pulled/digest-pinned images, not just kind. See
+[VERIFICATION.md](VERIFICATION.md#kubernetes) for the full command transcript.
+
 ## Distributed tracing
 
 All three services export OpenTelemetry traces via OTLP/HTTP when

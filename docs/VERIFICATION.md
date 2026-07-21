@@ -194,3 +194,54 @@ The replica's counters moved from a clean reset after a single API call — the 
 genuinely went to the replica, not the primary, confirming
 `EnableReadReplica`/`readPool()` (`internal/store/postgres.go`) actually does what its
 name says under a real HTTP request, not just in isolation.
+
+## Kubernetes
+
+Created a real local cluster (`kind create cluster --name taskflow`), built the three
+images, loaded them in (`kind load docker-image ...`), deployed a throwaway Postgres
+in-cluster, then applied the actual repo manifests (`k8s/configmap.yaml`,
+`k8s/api-deployment.yaml`, `k8s/worker-deployment.yaml`,
+`k8s/scheduler-deployment.yaml`):
+
+```
+$ kubectl get pods
+postgres-...             1/1     Running
+taskflow-api-...         1/1     Running   (x2)
+taskflow-worker-...      1/1     Running   (x2)
+taskflow-scheduler-...   1/1     Running   (x2)
+```
+
+First attempt hit a real bug: pods stuck in `ImagePullBackOff` because the manifests'
+default `imagePullPolicy: Always` made the kubelet ignore the image `kind load` had
+already placed on the node. Fixed by adding `imagePullPolicy: IfNotPresent` to all
+three deployments, re-applied, all pods came up clean.
+
+Port-forwarded to the Service and drove it exactly like the docker-compose tests:
+
+```
+$ kubectl port-forward svc/taskflow-api 18080:80
+$ curl -X POST localhost:18080/v1/jobs -H "Authorization: Bearer $TOKEN" \
+    -d '{"name":"echo","payload":{"k8s":"real-cluster-test"}, ...}'
+$ curl localhost:18080/v1/jobs/<id>/runs -H "Authorization: Bearer $TOKEN"
+[{"status":"succeeded", "leased_by":"taskflow-worker-c55468f7-kvrz7-1", ...}]
+```
+
+`leased_by` names an actual pod - proof the lease/execute path works correctly across
+real Kubernetes replicas, the same SKIP LOCKED guarantee verified earlier under
+goroutines now holding under separate pods.
+
+Then installed `metrics-server` (not bundled with vanilla `kind`; needed
+`--kubelet-insecure-tls` patched in for kind's self-signed kubelet certs) to prove the
+HPAs aren't just configured but actually functional:
+
+```
+# before metrics-server:
+taskflow-api      cpu: <unknown>/70%
+# after:
+taskflow-api      cpu: 27%/70%
+taskflow-worker   cpu: 26%/70%
+```
+
+Cluster and all local images were torn down after verification
+(`kind delete cluster --name taskflow`) - this was a proof run, not a persistent
+environment.
