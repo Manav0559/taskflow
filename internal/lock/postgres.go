@@ -16,8 +16,8 @@ type postgresElector struct {
 	pool    *pgxpool.Pool
 	lockKey int64
 
-	mu      sync.Mutex
-	conn    *pgxpool.Conn
+	mu       sync.Mutex
+	conn     *pgxpool.Conn
 	isLeader bool
 }
 

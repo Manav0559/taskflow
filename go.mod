@@ -3,8 +3,11 @@ module github.com/manavsingla/taskflow
 go 1.26.5
 
 require (
+	github.com/go-chi/chi/v5 v5.3.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/prometheus/client_golang v1.24.0
+	github.com/robfig/cron/v3 v3.0.1
 )
 
 require (

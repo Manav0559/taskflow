@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskflow-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: taskflow-worker
+  template:
+    metadata:
+      labels:
+        app: taskflow-worker
+    spec:
+      containers:
+        - name: worker
+          # Real deploys should reference a registry-qualified image (e.g.
+          # <account>.dkr.ecr.<region>.amazonaws.com/taskflow-worker:<tag>), not :latest.
+          image: taskflow-worker:latest
+          ports:
+            - containerPort: 9090
+              name: metrics
+          envFrom:
+            - configMapRef:
+                name: taskflow-config
+            - secretRef:
+                name: taskflow-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: taskflow-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: taskflow-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

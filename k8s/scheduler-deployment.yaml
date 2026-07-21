@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskflow-scheduler
+spec:
+  # Safe to run at 2 replicas because the scheduler uses leader election - only
+  # the elected leader promotes, the rest sit as standbys. No HPA here: promotion
+  # throughput isn't the bottleneck this scales.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: taskflow-scheduler
+  template:
+    metadata:
+      labels:
+        app: taskflow-scheduler
+    spec:
+      containers:
+        - name: scheduler
+          # Real deploys should reference a registry-qualified image (e.g.
+          # <account>.dkr.ecr.<region>.amazonaws.com/taskflow-scheduler:<tag>), not :latest.
+          image: taskflow-scheduler:latest
+          ports:
+            - containerPort: 9090
+              name: metrics
+          envFrom:
+            - configMapRef:
+                name: taskflow-config
+            - secretRef:
+                name: taskflow-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

@@ -27,36 +27,36 @@ const (
 // Job is a job definition: either a one-shot task or a recurring (cron_expr set) template.
 // Each time a Job becomes eligible to run, a JobRun is created for it.
 type Job struct {
-	ID              string          `json:"id"`
-	Name            string          `json:"name"`
-	Payload         map[string]any  `json:"payload"`
-	CronExpr        *string         `json:"cron_expr,omitempty"`
-	Priority        int16           `json:"priority"`
-	MaxAttempts     int16           `json:"max_attempts"`
-	TimeoutSeconds  int32           `json:"timeout_seconds"`
-	Status          JobStatus       `json:"status"`
-	IdempotencyKey  *string         `json:"idempotency_key,omitempty"`
-	DependsOn       []string        `json:"depends_on,omitempty"` // job IDs this job's runs must wait on
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Payload        map[string]any `json:"payload"`
+	CronExpr       *string        `json:"cron_expr,omitempty"`
+	Priority       int16          `json:"priority"`
+	MaxAttempts    int16          `json:"max_attempts"`
+	TimeoutSeconds int32          `json:"timeout_seconds"`
+	Status         JobStatus      `json:"status"`
+	IdempotencyKey *string        `json:"idempotency_key,omitempty"`
+	DependsOn      []string       `json:"depends_on,omitempty"` // job IDs this job's runs must wait on
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 // JobRun is a single execution attempt (or series of attempts) of a Job.
 type JobRun struct {
-	ID             string     `json:"id"`
-	JobID          string     `json:"job_id"`
-	Status         RunStatus  `json:"status"`
-	Attempt        int16      `json:"attempt"`
-	Priority       int16      `json:"priority"`
-	ScheduledAt    time.Time  `json:"scheduled_at"`
-	LeasedBy       *string    `json:"leased_by,omitempty"`
-	LeasedAt       *time.Time `json:"leased_at,omitempty"`
-	LeaseExpiresAt *time.Time `json:"lease_expires_at,omitempty"`
-	StartedAt      *time.Time `json:"started_at,omitempty"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	ID             string         `json:"id"`
+	JobID          string         `json:"job_id"`
+	Status         RunStatus      `json:"status"`
+	Attempt        int16          `json:"attempt"`
+	Priority       int16          `json:"priority"`
+	ScheduledAt    time.Time      `json:"scheduled_at"`
+	LeasedBy       *string        `json:"leased_by,omitempty"`
+	LeasedAt       *time.Time     `json:"leased_at,omitempty"`
+	LeaseExpiresAt *time.Time     `json:"lease_expires_at,omitempty"`
+	StartedAt      *time.Time     `json:"started_at,omitempty"`
+	FinishedAt     *time.Time     `json:"finished_at,omitempty"`
 	Result         map[string]any `json:"result,omitempty"`
-	Error          *string    `json:"error,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
+	Error          *string        `json:"error,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 
 type WorkerStatus string
@@ -86,12 +86,12 @@ type DeadLetter struct {
 // kept distinct from the persisted Job/JobRun so server-assigned fields (ID, timestamps)
 // can't be forged by a caller.
 type NewJobInput struct {
-	Name            string         `json:"name"`
-	Payload         map[string]any `json:"payload"`
-	CronExpr        *string        `json:"cron_expr,omitempty"`
-	Priority        int16          `json:"priority"`
-	MaxAttempts     int16          `json:"max_attempts"`
-	TimeoutSeconds  int32          `json:"timeout_seconds"`
-	IdempotencyKey  *string        `json:"idempotency_key,omitempty"`
-	DependsOn       []string       `json:"depends_on,omitempty"`
+	Name           string         `json:"name"`
+	Payload        map[string]any `json:"payload"`
+	CronExpr       *string        `json:"cron_expr,omitempty"`
+	Priority       int16          `json:"priority"`
+	MaxAttempts    int16          `json:"max_attempts"`
+	TimeoutSeconds int32          `json:"timeout_seconds"`
+	IdempotencyKey *string        `json:"idempotency_key,omitempty"`
+	DependsOn      []string       `json:"depends_on,omitempty"`
 }

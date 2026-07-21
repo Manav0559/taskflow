@@ -11,24 +11,25 @@ import (
 )
 
 type Config struct {
-	DatabaseURL     string
-	HTTPAddr        string
-	JWTSecret       string
-	LeaseDuration   time.Duration
-	PollInterval    time.Duration
-	WorkerID        string
-	MetricsAddr     string
-	RateLimitRPS    float64
-	RateLimitBurst  int
+	DatabaseURL    string
+	HTTPAddr       string
+	JWTSecret      string
+	LeaseDuration  time.Duration
+	PollInterval   time.Duration
+	WorkerID       string
+	MetricsAddr    string
+	RateLimitRPS   float64
+	RateLimitBurst int
+	Concurrency    int
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		DatabaseURL:    getEnv("DATABASE_URL", "postgres://taskflow:taskflow@localhost:5432/taskflow?sslmode=disable"),
-		HTTPAddr:       getEnv("HTTP_ADDR", ":8080"),
-		JWTSecret:      getEnv("JWT_SECRET", ""),
-		MetricsAddr:    getEnv("METRICS_ADDR", ":9090"),
-		WorkerID:       getEnv("WORKER_ID", ""),
+		DatabaseURL: getEnv("DATABASE_URL", "postgres://taskflow:taskflow@localhost:5432/taskflow?sslmode=disable"),
+		HTTPAddr:    getEnv("HTTP_ADDR", ":8080"),
+		JWTSecret:   getEnv("JWT_SECRET", ""),
+		MetricsAddr: getEnv("METRICS_ADDR", ":9090"),
+		WorkerID:    getEnv("WORKER_ID", ""),
 	}
 
 	var err error
@@ -42,6 +43,9 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 	if cfg.RateLimitBurst, err = getEnvInt("RATE_LIMIT_BURST", 40); err != nil {
+		return cfg, err
+	}
+	if cfg.Concurrency, err = getEnvInt("WORKER_CONCURRENCY", 4); err != nil {
 		return cfg, err
 	}
 
