@@ -12,11 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"github.com/manavsingla/taskflow/internal/api"
 	"github.com/manavsingla/taskflow/internal/config"
 	"github.com/manavsingla/taskflow/internal/logger"
 	"github.com/manavsingla/taskflow/internal/metrics"
 	"github.com/manavsingla/taskflow/internal/store"
+	"github.com/manavsingla/taskflow/internal/tracing"
 )
 
 func main() {
@@ -35,6 +38,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	shutdownTracing, err := tracing.Init(ctx, "api", cfg.OTLPEndpoint)
+	if err != nil {
+		log.Error("init tracing", "error", err)
+		os.Exit(1)
+	}
+	defer shutdownTracing(context.Background())
+
 	st, err := store.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Error("connect to database", "error", err)
@@ -48,8 +58,9 @@ func main() {
 	}
 
 	router := api.NewRouter(st, log, cfg.JWTSecret, cfg.RateLimitRPS, cfg.RateLimitBurst)
+	tracedRouter := otelhttp.NewHandler(router, "taskflow-api")
 
-	apiServer := &http.Server{Addr: cfg.HTTPAddr, Handler: router}
+	apiServer := &http.Server{Addr: cfg.HTTPAddr, Handler: tracedRouter}
 	metricsServer := &http.Server{Addr: cfg.MetricsAddr, Handler: metrics.Handler()}
 
 	errCh := make(chan error, 2)

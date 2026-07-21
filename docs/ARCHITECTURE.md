@@ -167,6 +167,35 @@ write, a message send) are responsible for their own idempotency (e.g. keying on
 `run.ID` or `job.IdempotencyKey`) if that matters for their workload. This is stated
 plainly rather than glossed over: taskflow does not solve exactly-once delivery.
 
+## Distributed tracing
+
+All three services export OpenTelemetry traces via OTLP/HTTP when
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set (docker-compose points it at a bundled Jaeger
+all-in-one; unset, tracing is a no-op so nothing depends on a collector being present).
+Two things are instrumented automatically rather than call-site by call-site:
+
+- **Every Postgres query** — `internal/store/tracing.go` implements `pgx.QueryTracer`
+  and is wired into the pool once in `store.New`, so all ~25 `Store` methods get a
+  `pg.query` span (with the SQL text as an attribute) without editing any of them.
+- **Every HTTP request** — `cmd/api/main.go` wraps the router in
+  `otelhttp.NewHandler`, so each request gets a root span.
+
+This produces real parent/child traces, not just isolated spans: a `POST /v1/jobs`
+request's span is the parent of its `begin` / `INSERT INTO jobs` / `commit` query
+spans, verified by hitting a running instance and pulling the trace back out of
+Jaeger's API (see [VERIFICATION.md](VERIFICATION.md)) — not just asserted from reading
+the code. `internal/worker/pool.go` (`executeOne`) and
+`internal/scheduler/promoter.go` (`PromoteOnce`) each get their own span too.
+
+**Limitation, stated plainly:** these traces are per-service, not linked into one
+end-to-end trace per job. A request's HTTP span and its DB query spans share a trace
+because they're the same process, same context — but the scheduler's later
+`PromoteOnce` span and the worker's later `executeOne` span for the *same job* start
+new, unrelated traces, because nothing today persists the originating trace ID on the
+job/run for the scheduler or worker to continue. Doing that (store a W3C traceparent
+on job creation, extract and continue it when promoting and when executing) is the
+real next step for a fully linked trace — not implemented here.
+
 ## Known limitations / what's not built
 
 - **`Promoter.PromoteOnce` doesn't paginate.** It calls `ListJobs` with a single bounded

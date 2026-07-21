@@ -15,6 +15,7 @@ import (
 	"github.com/manavsingla/taskflow/internal/logger"
 	"github.com/manavsingla/taskflow/internal/metrics"
 	"github.com/manavsingla/taskflow/internal/store"
+	"github.com/manavsingla/taskflow/internal/tracing"
 	"github.com/manavsingla/taskflow/internal/worker"
 )
 
@@ -29,6 +30,13 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracing, err := tracing.Init(ctx, "worker", cfg.OTLPEndpoint)
+	if err != nil {
+		log.Error("init tracing", "error", err)
+		os.Exit(1)
+	}
+	defer shutdownTracing(context.Background())
 
 	st, err := store.New(ctx, cfg.DatabaseURL)
 	if err != nil {
