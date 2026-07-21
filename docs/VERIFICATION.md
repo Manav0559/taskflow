@@ -245,3 +245,43 @@ taskflow-worker   cpu: 26%/70%
 Cluster and all local images were torn down after verification
 (`kind delete cluster --name taskflow`) - this was a proof run, not a persistent
 environment.
+
+## Leader-election failover
+
+Started two scheduler replicas against the same Postgres. **First attempt found a real
+bug**: both starting at once raced on `RunMigrations` and one crashed:
+
+```
+ERROR: create schema_migrations: ERROR: duplicate key value violates unique
+constraint "pg_type_typname_nsp_index" (SQLSTATE 23505)
+```
+
+Fixed by wrapping `RunMigrations` in its own `pg_advisory_lock` (`internal/store/migrate.go`)
+so concurrent callers serialize. Reset the database and retried - both replicas
+started cleanly:
+
+```
+$ curl localhost:9201/metrics | grep is_leader
+taskflow_scheduler_is_leader 0
+$ curl localhost:9202/metrics | grep is_leader
+taskflow_scheduler_is_leader 1        # scheduler-2 is the leader
+
+$ psql -c "INSERT INTO jobs (name, payload) VALUES ('failover-test-1', '{}');"
+$ tail scheduler-2.log
+{"msg":"promoted job","job_id":"74aaa9d2-...","name":"failover-test-1"}   # leader promotes
+```
+
+Then killed the leader hard, mid-process, and watched the standby take over:
+
+```
+$ kill -9 <scheduler-2 pid>
+$ sleep 3 && curl localhost:9201/metrics | grep is_leader
+taskflow_scheduler_is_leader 1        # scheduler-1 took over within ~3s
+
+$ psql -c "INSERT INTO jobs (name, payload) VALUES ('failover-test-2', '{}');"
+$ tail scheduler-1.log
+{"msg":"promoted job","job_id":"e2813acf-...","name":"failover-test-2"}   # new leader promotes
+```
+
+Both jobs show up in `job_runs` as `pending` - proof the new leader isn't just holding
+the lock, it's actually doing the promotion work the old leader was doing.

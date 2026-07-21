@@ -11,10 +11,32 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// migrationLockKey is an arbitrary fixed pg_advisory_lock key, distinct from the
+// scheduler's promotion leader lock (727433001) - an unrelated concern that happens
+// to use the same primitive.
+const migrationLockKey = 727433002
+
 // RunMigrations applies every *.sql file in dir, in filename sort order, that is not
-// already recorded in schema_migrations. Safe to call on every process start.
+// already recorded in schema_migrations. Safe to call on every process start -
+// including multiple replicas of the same service starting concurrently (a real
+// scenario: this project's own k8s manifests run 2 replicas of each service). Without
+// the advisory lock below, two concurrent callers can both see a migration as
+// "not yet applied" and both try to execute its DDL at once, which Postgres's catalog
+// rejects with a duplicate-key error on the second one - a real crash this project hit
+// during its own leader-election failover test, not a hypothetical.
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool, dir string) error {
-	if _, err := pool.Exec(ctx, `
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration lock connection: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationLockKey); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, migrationLockKey)
+
+	if _, err := conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version TEXT PRIMARY KEY,
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -39,7 +61,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 
 	for _, version := range versions {
 		var applied bool
-		if err := pool.QueryRow(ctx,
+		if err := conn.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, version,
 		).Scan(&applied); err != nil {
 			return fmt.Errorf("check migration %s: %w", version, err)
@@ -53,7 +75,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 			return fmt.Errorf("read migration %s: %w", version, err)
 		}
 
-		tx, err := pool.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("begin migration %s: %w", version, err)
 		}
