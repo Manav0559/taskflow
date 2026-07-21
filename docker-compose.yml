@@ -15,6 +15,16 @@ services:
     ports:
       - "5432:5432"
 
+  jaeger:
+    # all-in-one accepts OTLP/HTTP natively on 4318 in recent images - no collector
+    # needed for a single-node/dev setup like this.
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4318:4318"   # OTLP/HTTP receiver
+
   api:
     build:
       context: .
@@ -27,6 +37,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       HTTP_ADDR: :8080
       METRICS_ADDR: :9090
+      OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4318
     ports:
       - "8080:8080"
       - "9090:9090"
@@ -47,6 +58,7 @@ services:
       DATABASE_URL: postgres://taskflow:taskflow@postgres:5432/taskflow?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       METRICS_ADDR: :9090
+      OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4318
     ports:
       - "9091:9090"
 
@@ -63,6 +75,7 @@ services:
       DATABASE_URL: postgres://taskflow:taskflow@postgres:5432/taskflow?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       METRICS_ADDR: :9090
+      OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4318
     ports:
       - "9092:9090"
 

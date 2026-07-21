@@ -9,10 +9,17 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/manavsingla/taskflow/internal/metrics"
 	"github.com/manavsingla/taskflow/internal/model"
 	"github.com/manavsingla/taskflow/internal/store"
 )
+
+var tracer = otel.Tracer("taskflow/worker")
 
 const maxBackoff = 5 * time.Minute
 
@@ -118,6 +125,14 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 }
 
 func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job) {
+	ctx, span := tracer.Start(ctx, "worker.executeOne", trace.WithAttributes(
+		attribute.String("job.id", job.ID),
+		attribute.String("job.name", job.Name),
+		attribute.String("run.id", run.ID),
+		attribute.Int("run.attempt", int(run.Attempt)),
+	))
+	defer span.End()
+
 	p.mu.RLock()
 	h, ok := p.handlers[job.Name]
 	p.mu.RUnlock()
@@ -131,6 +146,7 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 			p.Logger.Error("mark dead failed", "run_id", run.ID, "error", err)
 		}
 		metrics.RunsCompleted.WithLabelValues("dead").Inc()
+		span.SetStatus(codes.Error, msg)
 		p.Logger.Error("job run dead: no handler registered",
 			"run_id", run.ID, "job_id", job.ID, "job_name", job.Name)
 		return
@@ -159,9 +175,12 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 			p.Logger.Error("complete run failed", "run_id", run.ID, "error", cerr)
 		}
 		metrics.RunsCompleted.WithLabelValues("succeeded").Inc()
+		span.SetStatus(codes.Ok, "")
 		p.Logger.Info("job run succeeded", "run_id", run.ID, "job_id", job.ID, "job_name", job.Name)
 		return
 	}
+
+	span.RecordError(err)
 
 	// run.Attempt already reflects this attempt (LeaseNextRun increments it),
 	// so comparing it directly to MaxAttempts tells us if another try remains.
@@ -188,6 +207,7 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		p.Logger.Error("mark dead failed", "run_id", run.ID, "error", derr)
 	}
 	metrics.RunsCompleted.WithLabelValues("dead").Inc()
+	span.SetStatus(codes.Error, err.Error())
 	p.Logger.Error("job run dead: max attempts exceeded",
 		"run_id", run.ID, "job_id", job.ID, "job_name", job.Name,
 		"attempt", run.Attempt, "max_attempts", job.MaxAttempts, "error", err)

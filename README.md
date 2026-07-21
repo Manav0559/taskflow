@@ -118,7 +118,9 @@ Full endpoint reference: [docs/API.md](docs/API.md).
 - **Hand-rolled rate limiting** — per-IP in-memory token bucket, no external dependency
   (`internal/api/ratelimit.go`)
 - **Observability** — Prometheus metrics from all three services, scraped and graphed
-  via Grafana (`docker/prometheus/prometheus.yml`)
+  via Grafana (`docker/prometheus/prometheus.yml`); OpenTelemetry distributed tracing
+  via a bundled Jaeger, instrumenting every HTTP request and every Postgres query
+  automatically (`internal/tracing/`, `internal/store/tracing.go`)
 - **Infra as code** — Docker Compose for local dev, Kubernetes manifests, Terraform for
   AWS (ECS/RDS/ALB), and a GitHub Actions CI pipeline (`k8s/`, `terraform/`,
   `.github/workflows/ci.yml`)

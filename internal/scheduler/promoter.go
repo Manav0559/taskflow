@@ -6,11 +6,17 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/manavsingla/taskflow/internal/lock"
 	"github.com/manavsingla/taskflow/internal/metrics"
 	"github.com/manavsingla/taskflow/internal/model"
 	"github.com/manavsingla/taskflow/internal/store"
 )
+
+var tracer = otel.Tracer("taskflow/scheduler")
 
 // listActiveJobsLimit bounds the single ListJobs page the promoter scans per pass.
 // A real deployment with more active jobs than this would silently stop promoting
@@ -42,9 +48,14 @@ func NewPromoter(st store.Store, el lock.Elector, log *slog.Logger, interval tim
 // dependencies are satisfied. It is safe to call directly (e.g. from tests or an
 // admin "promote now" endpoint) without going through Run/Elector.
 func (p *Promoter) PromoteOnce(ctx context.Context) (int, error) {
+	ctx, span := tracer.Start(ctx, "scheduler.PromoteOnce")
+	defer span.End()
+
 	activeStatus := model.JobStatusActive
 	jobs, err := p.Store.ListJobs(ctx, &activeStatus, listActiveJobsLimit, 0)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return 0, err
 	}
 
@@ -106,6 +117,7 @@ func (p *Promoter) PromoteOnce(ctx context.Context) (int, error) {
 		metrics.QueueDepth.Set(float64(depth))
 	}
 
+	span.SetAttributes(attribute.Int("promoted.count", promoted))
 	return promoted, nil
 }
 

@@ -85,3 +85,37 @@ first (already-expired) lease and re-leased it to itself once before the process
 killed, incrementing the attempt counter a second time — visible evidence that lease
 expiry is checked independent of which worker owns it, including by the original
 worker itself.
+
+## Distributed tracing: a real trace pulled from Jaeger
+
+Started Postgres + a bundled Jaeger (`jaegertracing/all-in-one`, OTLP/HTTP on 4318)
+via `docker compose up -d postgres jaeger`, ran the `api` binary with
+`OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318`, minted a token, and did:
+
+```
+curl -X POST http://localhost:8080/v1/jobs -H "Authorization: Bearer $TOKEN" \
+  -d '{"name":"echo","payload":{"trace":"check"},"max_attempts":2,"timeout_seconds":10}'
+```
+
+Then queried Jaeger's own API (`GET /api/traces?service=api`) rather than eyeballing
+the UI, to get the raw span data:
+
+```
+$ curl -s "http://localhost:16686/api/services"
+{"data":["jaeger-all-in-one","api"],"total":2,...}
+
+$ curl -s "http://localhost:16686/api/traces/<trace-id>" | ...
+7ffdf80e... | pg.query | parent: [b2e983ee...] | db.statement: begin
+f17eb48e... | pg.query | parent: [b2e983ee...] | db.statement: INSERT INTO jobs (...)
+d9289ea5... | pg.query | parent: [b2e983ee...] | db.statement: commit
+b2e983ee... | POST     | parent: []           |
+```
+
+The `POST` span (from `otelhttp.NewHandler` wrapping the router in `cmd/api/main.go`)
+is the parent of all three query spans (from the `pgx.QueryTracer` in
+`internal/store/tracing.go`) inside the transaction `CreateJob` runs. This confirms
+the instrumentation produces real linked parent/child traces for a request, not just
+disconnected spans that happen to share a service name — pulled from a running
+collector, not inferred from source. See
+[ARCHITECTURE.md](ARCHITECTURE.md#distributed-tracing) for what's *not* yet linked
+(the async hop from promoter to worker).

@@ -21,15 +21,17 @@ type Config struct {
 	RateLimitRPS   float64
 	RateLimitBurst int
 	Concurrency    int
+	OTLPEndpoint   string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://taskflow:taskflow@localhost:5432/taskflow?sslmode=disable"),
-		HTTPAddr:    getEnv("HTTP_ADDR", ":8080"),
-		JWTSecret:   getEnv("JWT_SECRET", ""),
-		MetricsAddr: getEnv("METRICS_ADDR", ":9090"),
-		WorkerID:    getEnv("WORKER_ID", ""),
+		DatabaseURL:  getEnv("DATABASE_URL", "postgres://taskflow:taskflow@localhost:5432/taskflow?sslmode=disable"),
+		HTTPAddr:     getEnv("HTTP_ADDR", ":8080"),
+		JWTSecret:    getEnv("JWT_SECRET", ""),
+		MetricsAddr:  getEnv("METRICS_ADDR", ":9090"),
+		WorkerID:     getEnv("WORKER_ID", ""),
+		OTLPEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 	}
 
 	var err error
