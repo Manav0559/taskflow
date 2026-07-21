@@ -124,5 +124,7 @@ Full endpoint reference: [docs/API.md](docs/API.md).
   `.github/workflows/ci.yml`)
 
 Read more: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (design decisions and
-trade-offs), [docs/API.md](docs/API.md) (endpoint reference), and
+trade-offs), [docs/API.md](docs/API.md) (endpoint reference),
+[docs/VERIFICATION.md](docs/VERIFICATION.md) (real load test numbers, rate-limit
+enforcement, and a crash-recovery chaos test — not just claims), and
 [docs/DEVLOG.md](docs/DEVLOG.md) (how this was built).
