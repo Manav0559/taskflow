@@ -23,6 +23,10 @@ type Store interface {
 	// --- Jobs ---
 	CreateJob(ctx context.Context, in model.NewJobInput) (*model.Job, error)
 	GetJob(ctx context.Context, id string) (*model.Job, error)
+	// GetJobByIdempotencyKey returns ErrNotFound if no job has this key. Used by the API
+	// to make POST /v1/jobs idempotent: a retried create with the same key returns the
+	// original job instead of erroring or creating a duplicate.
+	GetJobByIdempotencyKey(ctx context.Context, key string) (*model.Job, error)
 	ListJobs(ctx context.Context, status *model.JobStatus, limit, offset int) ([]*model.Job, error)
 	UpdateJobStatus(ctx context.Context, id string, status model.JobStatus) error
 	ListDependencies(ctx context.Context, jobID string) ([]string, error)
@@ -57,6 +61,8 @@ type Store interface {
 
 	GetRun(ctx context.Context, id string) (*model.JobRun, error)
 	ListJobRuns(ctx context.Context, jobID string, limit int) ([]*model.JobRun, error)
+	// CountPendingRuns is used to publish the taskflow_queue_depth gauge.
+	CountPendingRuns(ctx context.Context) (int, error)
 
 	// --- Workers ---
 	UpsertWorkerHeartbeat(ctx context.Context, workerID, hostname string) error
