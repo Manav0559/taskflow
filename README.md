@@ -104,6 +104,10 @@ Full endpoint reference: [docs/API.md](docs/API.md).
   consistent JSON error shapes (`internal/api/handlers.go`, `internal/api/router.go`)
 - **Postgres-as-queue** — `SELECT ... FOR UPDATE SKIP LOCKED` for lease claiming instead
   of a second broker (`internal/store/postgres.go: LeaseNextRun`)
+- **Read replica** — a real streaming Postgres hot standby (bootstrapped via
+  `pg_basebackup`), with pure-read API queries routed to it opt-in via
+  `REPLICA_DATABASE_URL`; writes and leasing always stay on the primary
+  (`docker/Dockerfile.postgres-replica`, `internal/store/postgres.go: EnableReadReplica`)
 - **Leader election via advisory locks** — `pg_try_advisory_lock` gates which scheduler
   replica promotes (`internal/lock`)
 - **DAG dependency resolution** — jobs can depend on other jobs; promotion checks that

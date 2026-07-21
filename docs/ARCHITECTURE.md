@@ -203,6 +203,39 @@ subsequent pause correctly evicted the stale entry and the next read showed
 `status: paused`, never a stale `active`. See
 [VERIFICATION.md](VERIFICATION.md#caching) for the actual commands and output.
 
+## Read replicas
+
+A real Postgres streaming replica (`docker-compose`'s `postgres-replica` service,
+`docker/Dockerfile.postgres-replica`) bootstraps itself via `pg_basebackup` against
+the primary on first start, then runs as a genuine hot standby (`hot_standby=on`,
+`wal_level=replica`) - not a second database that happens to have the same schema, an
+actual physical replica of the primary's WAL stream.
+
+`internal/store/postgres.go`'s `EnableReadReplica` points every pure-read method
+(`GetJob`, `ListJobs`, `GetRun`, `ListJobRuns`, `ListWorkers`, `CountPendingRuns`, ...)
+at a second connection pool when `REPLICA_DATABASE_URL` is set; every write and every
+transactional/leasing read (`LeaseNextRun`, `MarkDead`, `HasActiveRun` as called by the
+promoter, ...) always stays on the primary pool regardless. This is deliberately
+scoped to the `api` service only - `worker` and `scheduler` never call
+`EnableReadReplica`, so their `LatestRunForJob`/`HasActiveRun` calls (which decide
+whether to promote or double-schedule a job) never see replication lag, only the
+HTTP-facing read endpoints do, where a few hundred milliseconds of staleness is a
+completely acceptable trade-off for offloading read traffic from the primary.
+
+Verified for real, not just configured: inserted a row directly on the primary,
+confirmed it appeared on the replica within ~1s via a direct `psql` connection,
+confirmed the replica genuinely rejects writes at the Postgres level
+(`ERROR: cannot execute INSERT in a read-only transaction`), then reset the replica's
+`pg_stat_database` counters and made one real `GET /v1/jobs/{id}` call through the
+running API - the counters moved only on the replica, confirming the app-level routing
+actually reaches it, not just that the code compiles. See
+[VERIFICATION.md](VERIFICATION.md#read-replicas) for the full commands and output.
+
+**Limitation, stated plainly**: this is one primary + one replica, manually promoted
+if the primary dies (no automatic failover/consensus like Patroni or a cloud-managed
+Postgres would provide) - a real production setup would need that on top of what's
+here.
+
 ## Distributed tracing
 
 All three services export OpenTelemetry traces via OTLP/HTTP when
@@ -252,3 +285,12 @@ real next step for a fully linked trace — not implemented here.
   every job in the system. That's a deliberate scope boundary for what is currently an
   admin-facing service, not an oversight — but it means taskflow is not safe to expose
   to untrusted or mutually-distrusting callers as-is.
+- **No write sharding.** There's one primary accepting all writes (plus one read
+  replica - see "Read replicas" above). `SELECT ... FOR UPDATE SKIP LOCKED` leasing is
+  inherently a single-node pattern; sharding job_runs across multiple Postgres
+  primaries would mean either a global sequence/routing layer for run IDs or accepting
+  that a job's dependency graph might span shards, both real design problems this
+  project doesn't solve. At this project's scale, one primary's write throughput
+  (measured at ~1,739 req/s for job creation, see VERIFICATION.md) isn't the
+  bottleneck, so this wasn't worth the complexity - but it's a real ceiling, stated
+  plainly rather than glossed over.
