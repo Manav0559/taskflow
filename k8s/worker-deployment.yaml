@@ -17,6 +17,7 @@ spec:
           # Real deploys should reference a registry-qualified image (e.g.
           # <account>.dkr.ecr.<region>.amazonaws.com/taskflow-worker:<tag>), not :latest.
           image: taskflow-worker:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9090
               name: metrics

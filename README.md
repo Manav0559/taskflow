@@ -128,8 +128,10 @@ Full endpoint reference: [docs/API.md](docs/API.md).
   via Grafana (`docker/prometheus/prometheus.yml`); OpenTelemetry distributed tracing
   via a bundled Jaeger, instrumenting every HTTP request and every Postgres query
   automatically (`internal/tracing/`, `internal/store/tracing.go`)
-- **Infra as code** — Docker Compose for local dev, Kubernetes manifests, Terraform for
-  AWS (ECS/RDS/ALB), and a GitHub Actions CI pipeline (`k8s/`, `terraform/`,
+- **Infra as code** — Docker Compose for local dev, Kubernetes manifests (applied and
+  verified against a real cluster, HPAs scaling on real metrics-server readings —
+  see [VERIFICATION.md](docs/VERIFICATION.md#kubernetes)), Terraform for AWS
+  (ECS/RDS/ALB), and a GitHub Actions CI pipeline (`k8s/`, `terraform/`,
   `.github/workflows/ci.yml`)
 
 Read more: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (design decisions and
