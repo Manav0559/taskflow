@@ -3,6 +3,10 @@
 Base URL: `http://<host>:8080` (the `HTTP_ADDR` the `api` binary listens on; `:8080` by
 default). All routes are defined in `internal/api/router.go`.
 
+A machine-readable version of this reference is at [openapi.yaml](openapi.yaml)
+(OpenAPI 3.0, validated with `redocly lint`) — load it into Swagger UI, Postman, or a
+client generator instead of hand-transcribing the tables below.
+
 ## Auth
 
 Every route under `/v1` requires `Authorization: Bearer <token>`, where `<token>` is an
