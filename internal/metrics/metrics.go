@@ -54,6 +54,16 @@ var (
 		Name: "taskflow_scheduler_is_leader",
 		Help: "1 if this scheduler replica currently holds the promotion leader lock.",
 	})
+
+	CacheHits = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "taskflow_cache_hits_total",
+		Help: "Total number of read-through cache hits, by entity type.",
+	}, []string{"entity"}) // job|run
+
+	CacheMisses = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "taskflow_cache_misses_total",
+		Help: "Total number of read-through cache misses, by entity type.",
+	}, []string{"entity"})
 )
 
 // Handler returns the /metrics HTTP handler for the default Prometheus registry.

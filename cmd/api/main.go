@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/manavsingla/taskflow/internal/api"
+	"github.com/manavsingla/taskflow/internal/cache"
 	"github.com/manavsingla/taskflow/internal/config"
 	"github.com/manavsingla/taskflow/internal/logger"
 	"github.com/manavsingla/taskflow/internal/metrics"
@@ -45,19 +46,27 @@ func main() {
 	}
 	defer shutdownTracing(context.Background())
 
-	st, err := store.New(ctx, cfg.DatabaseURL)
+	pgStore, err := store.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Error("connect to database", "error", err)
 		os.Exit(1)
 	}
-	defer st.Close()
 
-	if err := store.RunMigrations(ctx, st.Pool(), "migrations"); err != nil {
+	if err := store.RunMigrations(ctx, pgStore.Pool(), "migrations"); err != nil {
 		log.Error("run migrations", "error", err)
 		os.Exit(1)
 	}
 
-	router := api.NewRouter(st, log, cfg.JWTSecret, cfg.RateLimitRPS, cfg.RateLimitBurst)
+	// Caching is opt-in: with REDIS_ADDR unset, svc is just pgStore and every read
+	// goes straight to Postgres, same as before this feature existed.
+	var svc store.Store = pgStore
+	if cfg.RedisAddr != "" {
+		svc = cache.Wrap(pgStore, cfg.RedisAddr)
+		log.Info("job/run read cache enabled", "redis_addr", cfg.RedisAddr)
+	}
+	defer svc.Close()
+
+	router := api.NewRouter(svc, log, cfg.JWTSecret, cfg.RateLimitRPS, cfg.RateLimitBurst)
 	tracedRouter := otelhttp.NewHandler(router, "taskflow-api")
 
 	apiServer := &http.Server{Addr: cfg.HTTPAddr, Handler: tracedRouter}

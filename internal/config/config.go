@@ -22,6 +22,7 @@ type Config struct {
 	RateLimitBurst int
 	Concurrency    int
 	OTLPEndpoint   string
+	RedisAddr      string
 }
 
 func Load() (Config, error) {
@@ -32,6 +33,7 @@ func Load() (Config, error) {
 		MetricsAddr:  getEnv("METRICS_ADDR", ":9090"),
 		WorkerID:     getEnv("WORKER_ID", ""),
 		OTLPEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		RedisAddr:    getEnv("REDIS_ADDR", ""),
 	}
 
 	var err error

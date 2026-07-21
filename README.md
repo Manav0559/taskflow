@@ -117,6 +117,9 @@ Full endpoint reference: [docs/API.md](docs/API.md).
 - **JWT auth** — shared-secret HS256 bearer tokens (`internal/api/auth.go`)
 - **Hand-rolled rate limiting** — per-IP in-memory token bucket, no external dependency
   (`internal/api/ratelimit.go`)
+- **Redis cache-aside layer** — caches job/run reads with stampede protection
+  (singleflight) and real invalidation on writes, opt-in via `REDIS_ADDR`
+  (`internal/cache/`)
 - **Observability** — Prometheus metrics from all three services, scraped and graphed
   via Grafana (`docker/prometheus/prometheus.yml`); OpenTelemetry distributed tracing
   via a bundled Jaeger, instrumenting every HTTP request and every Postgres query
