@@ -1,0 +1,10 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - unconvert
+    - unparam
+    - gocritic
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

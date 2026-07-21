@@ -30,6 +30,10 @@ trade-offs that come with it.
 
 ## Quickstart
 
+No local setup at all: open this repo in a free [GitHub Codespace](https://github.com/features/codespaces)
+(`.devcontainer/devcontainer.json` is already configured with Go + Docker-in-Docker)
+and run the command below there.
+
 ```bash
 docker compose up --build
 ```

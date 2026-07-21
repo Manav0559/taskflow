@@ -184,7 +184,7 @@ func (s *PostgresStore) CreateJob(ctx context.Context, in model.NewJobInput) (*m
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var job model.Job
 	var outRaw []byte
@@ -332,7 +332,7 @@ func (s *PostgresStore) LeaseNextRun(ctx context.Context, workerID string, lease
 	if err != nil {
 		return nil, nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var runID, jobID string
 	err = tx.QueryRow(ctx, `
@@ -443,7 +443,7 @@ func (s *PostgresStore) MarkDead(ctx context.Context, runID string, reason strin
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	run, err := fetchRun(ctx, tx, runID)
 	if err != nil {

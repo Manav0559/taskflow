@@ -130,6 +130,6 @@ func (s *Store) GetRun(ctx context.Context, id string) (*model.JobRun, error) {
 }
 
 func (s *Store) Close() {
-	s.redis.Close()
+	_ = s.redis.Close()
 	s.Store.Close()
 }

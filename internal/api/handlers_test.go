@@ -14,7 +14,7 @@ import (
 
 const testSecret = "handler-test-secret"
 
-func newTestRouter(t *testing.T) (http.Handler, *fakeStore, string) {
+func newTestRouter(t *testing.T) (http.Handler, string) {
 	t.Helper()
 	st := newFakeStore()
 	log := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
@@ -24,7 +24,7 @@ func newTestRouter(t *testing.T) (http.Handler, *fakeStore, string) {
 	if err != nil {
 		t.Fatalf("MintToken: %v", err)
 	}
-	return router, st, token
+	return router, token
 }
 
 func doRequest(t *testing.T, router http.Handler, method, path, token string, body any) *httptest.ResponseRecorder {
@@ -50,7 +50,7 @@ func doRequest(t *testing.T, router http.Handler, method, path, token string, bo
 }
 
 func TestCreateJob_Validation(t *testing.T) {
-	router, _, token := newTestRouter(t)
+	router, token := newTestRouter(t)
 
 	tests := []struct {
 		name       string
@@ -77,7 +77,7 @@ func TestCreateJob_Validation(t *testing.T) {
 }
 
 func TestCreateJob_Defaults(t *testing.T) {
-	router, _, token := newTestRouter(t)
+	router, token := newTestRouter(t)
 
 	rec := doRequest(t, router, http.MethodPost, "/v1/jobs", token, map[string]any{"name": "echo"})
 	if rec.Code != http.StatusCreated {
@@ -96,7 +96,7 @@ func TestCreateJob_Defaults(t *testing.T) {
 }
 
 func TestCreateJob_Idempotency(t *testing.T) {
-	router, _, token := newTestRouter(t)
+	router, token := newTestRouter(t)
 	body := map[string]any{"name": "echo", "idempotency_key": "dup-key-1"}
 
 	rec1 := doRequest(t, router, http.MethodPost, "/v1/jobs", token, body)
@@ -122,7 +122,7 @@ func TestCreateJob_Idempotency(t *testing.T) {
 }
 
 func TestAuth_RequiredOnV1Routes(t *testing.T) {
-	router, _, _ := newTestRouter(t)
+	router, _ := newTestRouter(t)
 
 	paths := []string{"/v1/jobs", "/v1/workers"}
 	for _, p := range paths {
@@ -134,7 +134,7 @@ func TestAuth_RequiredOnV1Routes(t *testing.T) {
 }
 
 func TestHealthzAndMetrics_NoAuthRequired(t *testing.T) {
-	router, _, _ := newTestRouter(t)
+	router, _ := newTestRouter(t)
 
 	rec := doRequest(t, router, http.MethodGet, "/healthz", "", nil)
 	if rec.Code != http.StatusOK {
@@ -148,7 +148,7 @@ func TestHealthzAndMetrics_NoAuthRequired(t *testing.T) {
 }
 
 func TestGetJob_NotFound(t *testing.T) {
-	router, _, token := newTestRouter(t)
+	router, token := newTestRouter(t)
 	rec := doRequest(t, router, http.MethodGet, "/v1/jobs/does-not-exist", token, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
@@ -156,7 +156,7 @@ func TestGetJob_NotFound(t *testing.T) {
 }
 
 func TestPauseResumeJob(t *testing.T) {
-	router, _, token := newTestRouter(t)
+	router, token := newTestRouter(t)
 
 	rec := doRequest(t, router, http.MethodPost, "/v1/jobs", token, map[string]any{"name": "echo"})
 	var job model.Job
@@ -190,7 +190,7 @@ func TestPauseResumeJob(t *testing.T) {
 }
 
 func TestListJobs_InvalidStatusFilter(t *testing.T) {
-	router, _, token := newTestRouter(t)
+	router, token := newTestRouter(t)
 	rec := doRequest(t, router, http.MethodGet, "/v1/jobs?status=not-a-real-status", token, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
@@ -198,7 +198,7 @@ func TestListJobs_InvalidStatusFilter(t *testing.T) {
 }
 
 func TestListJobs_InvalidLimit(t *testing.T) {
-	router, _, token := newTestRouter(t)
+	router, token := newTestRouter(t)
 	rec := doRequest(t, router, http.MethodGet, "/v1/jobs?limit=not-a-number", token, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())

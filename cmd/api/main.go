@@ -39,30 +39,34 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	shutdownTracing, err := tracing.Init(ctx, "api", cfg.OTLPEndpoint)
-	if err != nil {
-		log.Error("init tracing", "error", err)
+	// fatal runs the deferred stop() before exiting (a bare os.Exit here would skip it),
+	// since we're past the point where stop is registered.
+	fatal := func(msg string, err error) {
+		log.Error(msg, "error", err)
+		stop()
 		os.Exit(1)
 	}
-	defer shutdownTracing(context.Background())
+
+	shutdownTracing, err := tracing.Init(ctx, "api", cfg.OTLPEndpoint)
+	if err != nil {
+		fatal("init tracing", err)
+	}
+	defer func() { _ = shutdownTracing(context.Background()) }()
 
 	pgStore, err := store.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Error("connect to database", "error", err)
-		os.Exit(1)
+		fatal("connect to database", err)
 	}
 
 	if err := store.RunMigrations(ctx, pgStore.Pool(), "migrations"); err != nil {
-		log.Error("run migrations", "error", err)
-		os.Exit(1)
+		fatal("run migrations", err)
 	}
 
 	// Read-replica routing is opt-in: with REPLICA_DATABASE_URL unset, reads stay on
 	// the primary pool, same as before this feature existed.
 	if cfg.ReplicaURL != "" {
 		if err := pgStore.EnableReadReplica(ctx, cfg.ReplicaURL); err != nil {
-			log.Error("connect to read replica", "error", err)
-			os.Exit(1)
+			fatal("connect to read replica", err)
 		}
 		log.Info("read replica enabled for job/run reads")
 	}

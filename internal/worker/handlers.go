@@ -76,7 +76,7 @@ func HTTPCallHandler(ctx context.Context, job *model.Job, run *model.JobRun) (ma
 	if err != nil {
 		return nil, fmt.Errorf("http_call: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	const maxBody = 4096
 	buf := make([]byte, maxBody)

@@ -34,7 +34,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationLockKey); err != nil {
 		return fmt.Errorf("acquire migration lock: %w", err)
 	}
-	defer conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, migrationLockKey)
+	defer func() { _, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, migrationLockKey) }()
 
 	if _, err := conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -81,13 +81,13 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 		}
 
 		if _, err := tx.Exec(ctx, string(body)); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("exec migration %s: %w", version, err)
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO schema_migrations (version) VALUES ($1)`, version,
 		); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("record migration %s: %w", version, err)
 		}
 		if err := tx.Commit(ctx); err != nil {

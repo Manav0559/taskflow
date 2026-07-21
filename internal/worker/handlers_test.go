@@ -51,7 +51,7 @@ func TestSleepHandler_RespectsContextCancellation(t *testing.T) {
 func TestHTTPCallHandler_Success(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte("hello from server"))
+		_, _ = w.Write([]byte("hello from server"))
 	}))
 	defer ts.Close()
 

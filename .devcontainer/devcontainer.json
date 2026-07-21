@@ -1,0 +1,20 @@
+{
+	"name": "taskflow",
+	"image": "mcr.microsoft.com/devcontainers/go:1-1.26-bookworm",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
+	},
+	"forwardPorts": [8080, 9090, 16686, 3000],
+	"portsAttributes": {
+		"8080": { "label": "taskflow API" },
+		"9090": { "label": "Prometheus" },
+		"16686": { "label": "Jaeger UI" },
+		"3000": { "label": "Grafana" }
+	},
+	"postCreateCommand": "go mod download",
+	"customizations": {
+		"vscode": {
+			"extensions": ["golang.go"]
+		}
+	}
+}
