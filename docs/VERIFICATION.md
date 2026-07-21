@@ -147,3 +147,50 @@ no stale `"active"` was served during the 30s TTL window that would otherwise st
 have been valid. The pause handler's own `GetJob` call (to return the updated job in
 its response) repopulates the cache with the fresh value, so the entry that exists in
 Redis afterward is correct, not just absent.
+
+## Read replicas
+
+Started `docker compose up -d postgres postgres-replica`. The replica's own startup
+log shows a genuine streaming handshake, not a mock:
+
+```
+postgres-replica-1 | starting backup recovery with redo LSN 0/2000028, ...
+postgres-replica-1 | consistent recovery state reached at 0/2000100
+postgres-replica-1 | database system is ready to accept read-only connections
+postgres-replica-1 | started streaming WAL from primary at 0/3000000 on timeline 1
+```
+
+Confirmed standby state and replication directly via `psql`:
+
+```
+$ docker compose exec postgres-replica psql -U taskflow -d taskflow -c "SELECT pg_is_in_recovery();"
+ t
+$ docker compose exec postgres psql -U taskflow -d taskflow -c "SELECT client_addr, state, sync_state FROM pg_stat_replication;"
+ 192.168.117.3 | streaming | async
+
+$ docker compose exec postgres psql ... -c "INSERT INTO jobs (name, payload) VALUES ('replica-test', '{}');"
+$ docker compose exec postgres-replica psql ... -c "SELECT id, name FROM jobs WHERE name='replica-test';"
+ 079ea2f4-... | replica-test    # <- replicated within ~1s
+
+$ docker compose exec postgres-replica psql ... -c "INSERT INTO jobs (name, payload) VALUES ('should-fail', '{}');"
+ERROR: cannot execute INSERT in a read-only transaction   # <- genuinely read-only
+```
+
+Then proved the app-level routing (not just "the code should route there") by
+resetting the replica's stats, making exactly one real `GET /v1/jobs/{id}` call
+through the running `api` binary (`REPLICA_DATABASE_URL` set), and checking which side
+moved:
+
+```
+$ docker compose exec postgres-replica psql ... -c "SELECT pg_stat_reset();"
+$ curl http://localhost:8080/v1/jobs/<id> -H "Authorization: Bearer $TOKEN"
+{"id":"...","name":"replica-test",...}
+
+$ docker compose exec postgres-replica psql ... -c "SELECT xact_commit, tup_returned FROM pg_stat_database WHERE datname='taskflow';"
+ 5 | 97   # <- moved: this GetJob call really executed here
+```
+
+The replica's counters moved from a clean reset after a single API call — the read
+genuinely went to the replica, not the primary, confirming
+`EnableReadReplica`/`readPool()` (`internal/store/postgres.go`) actually does what its
+name says under a real HTTP request, not just in isolation.

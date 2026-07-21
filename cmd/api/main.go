@@ -57,6 +57,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Read-replica routing is opt-in: with REPLICA_DATABASE_URL unset, reads stay on
+	// the primary pool, same as before this feature existed.
+	if cfg.ReplicaURL != "" {
+		if err := pgStore.EnableReadReplica(ctx, cfg.ReplicaURL); err != nil {
+			log.Error("connect to read replica", "error", err)
+			os.Exit(1)
+		}
+		log.Info("read replica enabled for job/run reads")
+	}
+
 	// Caching is opt-in: with REDIS_ADDR unset, svc is just pgStore and every read
 	// goes straight to Postgres, same as before this feature existed.
 	var svc store.Store = pgStore

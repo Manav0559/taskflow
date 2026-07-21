@@ -23,6 +23,7 @@ type Config struct {
 	Concurrency    int
 	OTLPEndpoint   string
 	RedisAddr      string
+	ReplicaURL     string
 }
 
 func Load() (Config, error) {
@@ -34,6 +35,7 @@ func Load() (Config, error) {
 		WorkerID:     getEnv("WORKER_ID", ""),
 		OTLPEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		RedisAddr:    getEnv("REDIS_ADDR", ""),
+		ReplicaURL:   getEnv("REPLICA_DATABASE_URL", ""),
 	}
 
 	var err error

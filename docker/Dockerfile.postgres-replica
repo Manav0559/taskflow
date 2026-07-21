@@ -1,0 +1,8 @@
+# A real Postgres streaming replica (not a mock) - bootstraps via pg_basebackup from
+# the primary on first start, then runs as a normal hot-standby postgres process.
+FROM postgres:16-alpine
+
+COPY docker/postgres/replica-entrypoint.sh /usr/local/bin/replica-entrypoint.sh
+RUN chmod +x /usr/local/bin/replica-entrypoint.sh
+
+ENTRYPOINT ["replica-entrypoint.sh"]

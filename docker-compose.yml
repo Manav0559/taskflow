@@ -5,8 +5,23 @@ services:
       POSTGRES_USER: taskflow
       POSTGRES_PASSWORD: taskflow
       POSTGRES_DB: taskflow
+      # Local-dev-only simplification: trust auth on the docker-internal network lets
+      # the replica's pg_basebackup/streaming connection through without juggling a
+      # custom pg_hba.conf. Never do this on a network reachable from outside the
+      # compose stack - use password/TLS auth for anything real.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "hot_standby=on"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-replication.sql:/docker-entrypoint-initdb.d/1-init-replication.sql
+      - ./docker/postgres/init-replication.sh:/docker-entrypoint-initdb.d/2-init-replication.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U taskflow -d taskflow"]
       interval: 5s
@@ -14,6 +29,28 @@ services:
       retries: 5
     ports:
       - "5432:5432"
+
+  postgres-replica:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.postgres-replica
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      PRIMARY_HOST: postgres
+      REPLICATION_USER: replicator
+      REPLICATION_PASSWORD: replicator
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskflow -d taskflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5434:5432"
 
   redis:
     image: redis:7-alpine
@@ -37,10 +74,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-replica:
+        condition: service_healthy
       redis:
         condition: service_started
     environment:
       DATABASE_URL: postgres://taskflow:taskflow@postgres:5432/taskflow?sslmode=disable
+      REPLICA_DATABASE_URL: postgres://taskflow:taskflow@postgres-replica:5432/taskflow?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       HTTP_ADDR: :8080
       METRICS_ADDR: :9090
@@ -103,3 +143,4 @@ services:
 
 volumes:
   postgres-data:
+  postgres-replica-data:

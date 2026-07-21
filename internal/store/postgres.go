@@ -21,6 +21,11 @@ const runColumns = `id, job_id, status, attempt, priority, scheduled_at, leased_
 // PostgresStore is the production store.Store implementation backed by Postgres.
 type PostgresStore struct {
 	pool *pgxpool.Pool
+	// replicaPool, if set via EnableReadReplica, is used for pure-read queries
+	// (GetJob, ListJobs, GetRun, ...) so they don't compete with writes and leasing
+	// for primary connections. It is nil unless a read replica is configured -
+	// readPool() falls back to pool in that case, so this is purely additive.
+	replicaPool *pgxpool.Pool
 }
 
 var _ Store = (*PostgresStore)(nil)
@@ -58,11 +63,47 @@ func New(ctx context.Context, databaseURL string) (*PostgresStore, error) {
 
 func (s *PostgresStore) Close() {
 	s.pool.Close()
+	if s.replicaPool != nil {
+		s.replicaPool.Close()
+	}
 }
 
 // Pool exposes the underlying connection pool so callers (e.g. cmd/* main.go) can run
 // RunMigrations against the same pool the store uses, rather than opening a second one.
 func (s *PostgresStore) Pool() *pgxpool.Pool {
+	return s.pool
+}
+
+// EnableReadReplica points all pure-read queries (GetJob, ListJobs, GetRun, ...) at a
+// second Postgres connection - a streaming replica in a real deployment - instead of
+// the primary pool. Writes and transactional reads (LeaseNextRun, MarkDead, ...)
+// always stay on the primary: replication lag makes a replica read of run-leasing
+// state unsafe, so only genuinely read-only, staleness-tolerant queries move here.
+func (s *PostgresStore) EnableReadReplica(ctx context.Context, replicaURL string) error {
+	poolConfig, err := pgxpool.ParseConfig(replicaURL)
+	if err != nil {
+		return fmt.Errorf("parse replica database url: %w", err)
+	}
+	poolConfig.ConnConfig.Tracer = newOtelQueryTracer()
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return fmt.Errorf("create replica pgx pool: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return fmt.Errorf("ping replica database: %w", err)
+	}
+	s.replicaPool = pool
+	return nil
+}
+
+// readPool returns the replica pool if one is configured, else the primary - so every
+// read method below can call s.readPool() unconditionally.
+func (s *PostgresStore) readPool() *pgxpool.Pool {
+	if s.replicaPool != nil {
+		return s.replicaPool
+	}
 	return s.pool
 }
 
@@ -180,7 +221,7 @@ func (s *PostgresStore) CreateJob(ctx context.Context, in model.NewJobInput) (*m
 }
 
 func (s *PostgresStore) GetJob(ctx context.Context, id string) (*model.Job, error) {
-	job, err := fetchJob(ctx, s.pool, id)
+	job, err := fetchJob(ctx, s.readPool(), id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -191,7 +232,7 @@ func (s *PostgresStore) GetJob(ctx context.Context, id string) (*model.Job, erro
 }
 
 func (s *PostgresStore) GetJobByIdempotencyKey(ctx context.Context, key string) (*model.Job, error) {
-	job, err := fetchJobByIdempotencyKey(ctx, s.pool, key)
+	job, err := fetchJobByIdempotencyKey(ctx, s.readPool(), key)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -205,10 +246,10 @@ func (s *PostgresStore) ListJobs(ctx context.Context, status *model.JobStatus, l
 	var rows pgx.Rows
 	var err error
 	if status != nil {
-		rows, err = s.pool.Query(ctx, `SELECT `+jobColumns+` FROM jobs WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+		rows, err = s.readPool().Query(ctx, `SELECT `+jobColumns+` FROM jobs WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 			*status, limit, offset)
 	} else {
-		rows, err = s.pool.Query(ctx, `SELECT `+jobColumns+` FROM jobs ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+		rows, err = s.readPool().Query(ctx, `SELECT `+jobColumns+` FROM jobs ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
 			limit, offset)
 	}
 	if err != nil {
@@ -234,7 +275,7 @@ func (s *PostgresStore) ListJobs(ctx context.Context, status *model.JobStatus, l
 	}
 
 	for _, j := range jobs {
-		deps, err := fetchDependencies(ctx, s.pool, j.ID)
+		deps, err := fetchDependencies(ctx, s.readPool(), j.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -255,11 +296,11 @@ func (s *PostgresStore) UpdateJobStatus(ctx context.Context, id string, status m
 }
 
 func (s *PostgresStore) ListDependencies(ctx context.Context, jobID string) ([]string, error) {
-	return fetchDependencies(ctx, s.pool, jobID)
+	return fetchDependencies(ctx, s.readPool(), jobID)
 }
 
 func (s *PostgresStore) LatestRunForJob(ctx context.Context, jobID string) (*model.JobRun, error) {
-	row := s.pool.QueryRow(ctx, `SELECT `+runColumns+` FROM job_runs WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1`, jobID)
+	row := s.readPool().QueryRow(ctx, `SELECT `+runColumns+` FROM job_runs WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1`, jobID)
 	run, err := scanRun(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -272,7 +313,7 @@ func (s *PostgresStore) LatestRunForJob(ctx context.Context, jobID string) (*mod
 
 func (s *PostgresStore) HasActiveRun(ctx context.Context, jobID string) (bool, error) {
 	var exists bool
-	err := s.pool.QueryRow(ctx, `
+	err := s.readPool().QueryRow(ctx, `
 		SELECT EXISTS(SELECT 1 FROM job_runs WHERE job_id = $1 AND status IN ('pending','leased','running'))
 	`, jobID).Scan(&exists)
 	return exists, err
@@ -453,7 +494,7 @@ func (s *PostgresStore) ReclaimExpiredLeases(ctx context.Context) (int, error) {
 }
 
 func (s *PostgresStore) GetRun(ctx context.Context, id string) (*model.JobRun, error) {
-	run, err := fetchRun(ctx, s.pool, id)
+	run, err := fetchRun(ctx, s.readPool(), id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -464,7 +505,7 @@ func (s *PostgresStore) GetRun(ctx context.Context, id string) (*model.JobRun, e
 }
 
 func (s *PostgresStore) ListJobRuns(ctx context.Context, jobID string, limit int) ([]*model.JobRun, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+runColumns+` FROM job_runs WHERE job_id = $1 ORDER BY created_at DESC LIMIT $2`,
+	rows, err := s.readPool().Query(ctx, `SELECT `+runColumns+` FROM job_runs WHERE job_id = $1 ORDER BY created_at DESC LIMIT $2`,
 		jobID, limit)
 	if err != nil {
 		return nil, err
@@ -484,7 +525,7 @@ func (s *PostgresStore) ListJobRuns(ctx context.Context, jobID string, limit int
 
 func (s *PostgresStore) CountPendingRuns(ctx context.Context) (int, error) {
 	var count int
-	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM job_runs WHERE status = 'pending'`).Scan(&count)
+	err := s.readPool().QueryRow(ctx, `SELECT count(*) FROM job_runs WHERE status = 'pending'`).Scan(&count)
 	return count, err
 }
 
@@ -498,7 +539,7 @@ func (s *PostgresStore) UpsertWorkerHeartbeat(ctx context.Context, workerID, hos
 }
 
 func (s *PostgresStore) ListWorkers(ctx context.Context) ([]*model.Worker, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, hostname, status, last_heartbeat, started_at FROM workers ORDER BY id`)
+	rows, err := s.readPool().Query(ctx, `SELECT id, hostname, status, last_heartbeat, started_at FROM workers ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
