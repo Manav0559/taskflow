@@ -119,3 +119,31 @@ disconnected spans that happen to share a service name — pulled from a running
 collector, not inferred from source. See
 [ARCHITECTURE.md](ARCHITECTURE.md#distributed-tracing) for what's *not* yet linked
 (the async hop from promoter to worker).
+
+## Caching
+
+Started Postgres + Redis (`docker compose up -d postgres redis`), ran `api` with
+`REDIS_ADDR=localhost:6379`, created a job, then:
+
+```
+$ curl -w "time: %{time_total}s\n" .../v1/jobs/<id>   # 1st call, cold
+time: 0.059545s
+$ redis-cli GET taskflow:job:<id>
+{"id":"...","name":"echo",...,"status":"active",...}   # confirmed actually cached
+$ curl -w "time: %{time_total}s\n" .../v1/jobs/<id>   # 2nd call, cached
+time: 0.000968s
+$ curl .../metrics | grep taskflow_cache
+taskflow_cache_hits_total{entity="job"} 1
+taskflow_cache_misses_total{entity="job"} 1
+```
+
+~60x faster on the cached read (59.5ms → 0.97ms), and the hit/miss counters matched
+exactly what happened (one miss, then one hit) — not just present in code, observed.
+
+Then, to confirm invalidation actually prevents staleness (not just "the code calls
+Del()"): paused the same job via `POST /v1/jobs/<id>/pause`, then immediately
+`GET /v1/jobs/<id>` again. Response showed `"status":"paused"` on the very next read —
+no stale `"active"` was served during the 30s TTL window that would otherwise still
+have been valid. The pause handler's own `GetJob` call (to return the updated job in
+its response) repopulates the cache with the fresh value, so the entry that exists in
+Redis afterward is correct, not just absent.

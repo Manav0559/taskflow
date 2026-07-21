@@ -167,6 +167,42 @@ write, a message send) are responsible for their own idempotency (e.g. keying on
 `run.ID` or `job.IdempotencyKey`) if that matters for their workload. This is stated
 plainly rather than glossed over: taskflow does not solve exactly-once delivery.
 
+## Caching
+
+The API's two single-entity reads (`GetJob`, `GetRun`) go through an optional
+Redis cache-aside layer (`internal/cache/`), enabled by setting `REDIS_ADDR` on the
+`api` service only — `worker`'s `LeaseNextRun` and `scheduler`'s `PromoteOnce` always
+go straight to Postgres, deliberately never through the cache, because job leasing and
+promotion need up-to-the-moment consistency that a cache would undermine. Caching only
+the read-facing HTTP lookups, not the scheduling-critical paths, is the load-bearing
+design decision here — it's not that "everything gets cached," it's that exactly the
+two paths where staleness is tolerable are cached and nothing else.
+
+The two entities need different strategies because they change differently:
+
+- **Job**: cached with a 30s TTL, invalidated on every `UpdateJobStatus` write. A job's
+  status can flip (pause/resume) at any time, so time-boxed + actively invalidated is
+  the only safe combination — skip the invalidation and you serve a paused job as
+  active for up to the TTL, which is exactly the "cache invalidation is one of the two
+  hard problems" bug class this is designed to avoid.
+- **JobRun**: only cached once `status` is `succeeded` or `dead` (not `failed` — a
+  failed-with-retries-left run flips back to `pending` almost immediately, and a
+  terminally-failed run is followed by `MarkDead` within the same worker call, so
+  `failed` alone is never stable long enough to trust). A terminal run's fields never
+  change again, so it gets a 1-hour TTL and no invalidation logic at all — there's
+  nothing to invalidate.
+
+**Cache stampede protection**: concurrent cache misses for the same key are
+deduplicated via `golang.org/x/sync/singleflight`, so N requests arriving during the
+same cold window trigger one Postgres fetch, not N — without this, a job right after
+its cache entry expires gets hit by every concurrent reader at once.
+
+Verified for real, not just read from the code: a cold `GetJob` took 59.5ms; the
+identical request immediately after was served from Redis in 0.97ms (~60x faster); a
+subsequent pause correctly evicted the stale entry and the next read showed
+`status: paused`, never a stale `active`. See
+[VERIFICATION.md](VERIFICATION.md#caching) for the actual commands and output.
+
 ## Distributed tracing
 
 All three services export OpenTelemetry traces via OTLP/HTTP when
