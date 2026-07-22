@@ -144,10 +144,37 @@ func (f *fakeStore) LatestRunForJob(ctx context.Context, jobID string) (*model.J
 	return latest, nil
 }
 
+func (f *fakeStore) LatestRunsForJobs(ctx context.Context, jobIDs []string) (map[string]*model.JobRun, error) {
+	result := make(map[string]*model.JobRun, len(jobIDs))
+	for _, id := range jobIDs {
+		run, err := f.LatestRunForJob(ctx, id)
+		if err == store.ErrNotFound {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[id] = run
+	}
+	return result, nil
+}
+
 func (f *fakeStore) HasActiveRun(ctx context.Context, jobID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.activeRunJob[jobID], nil
+}
+
+func (f *fakeStore) HasActiveRuns(ctx context.Context, jobIDs []string) (map[string]bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := make(map[string]bool, len(jobIDs))
+	for _, id := range jobIDs {
+		if f.activeRunJob[id] {
+			result[id] = true
+		}
+	}
+	return result, nil
 }
 
 func (f *fakeStore) CreateRun(ctx context.Context, jobID string, priority int16, scheduledAt time.Time) (*model.JobRun, error) {

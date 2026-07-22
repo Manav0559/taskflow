@@ -110,8 +110,16 @@ func (s *fakeStore) LatestRunForJob(ctx context.Context, jobID string) (*model.J
 	return nil, store.ErrNotFound
 }
 
+func (s *fakeStore) LatestRunsForJobs(ctx context.Context, jobIDs []string) (map[string]*model.JobRun, error) {
+	return map[string]*model.JobRun{}, nil
+}
+
 func (s *fakeStore) HasActiveRun(ctx context.Context, jobID string) (bool, error) {
 	return false, nil
+}
+
+func (s *fakeStore) HasActiveRuns(ctx context.Context, jobIDs []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
 }
 
 func (s *fakeStore) CreateRun(ctx context.Context, jobID string, priority int16, scheduledAt time.Time) (*model.JobRun, error) {

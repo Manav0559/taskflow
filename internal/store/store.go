@@ -34,9 +34,17 @@ type Store interface {
 	// --- Runs: scheduling / promotion ---
 	// LatestRunForJob returns the most recently created run for a job, or ErrNotFound if none exists.
 	LatestRunForJob(ctx context.Context, jobID string) (*model.JobRun, error)
+	// LatestRunsForJobs is the batch form of LatestRunForJob: one round trip for every
+	// ID in jobIDs instead of one query per ID. Job IDs with no runs are simply absent
+	// from the result map. Used by the promoter, which otherwise does 2 queries per
+	// active job per tick (this plus HasActiveRun) regardless of how many jobs are due.
+	LatestRunsForJobs(ctx context.Context, jobIDs []string) (map[string]*model.JobRun, error)
 	// HasActiveRun reports whether jobID has a run in pending/leased/running state
 	// (used to avoid double-scheduling the same job concurrently).
 	HasActiveRun(ctx context.Context, jobID string) (bool, error)
+	// HasActiveRuns is the batch form of HasActiveRun: job IDs present (with value true)
+	// in the result map have an active run; absent IDs don't.
+	HasActiveRuns(ctx context.Context, jobIDs []string) (map[string]bool, error)
 	// CreateRun inserts a new pending run for jobID.
 	CreateRun(ctx context.Context, jobID string, priority int16, scheduledAt time.Time) (*model.JobRun, error)
 
