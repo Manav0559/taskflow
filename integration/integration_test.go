@@ -50,7 +50,7 @@ func TestJobLifecycleEndToEnd(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	router := api.NewRouter(st, log, testSecret, 1000, 1000)
+	router := api.NewRouter(st, log, testSecret, 1000, 1000, []string{"*"})
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
@@ -112,7 +112,7 @@ func TestDeadLetterOnUnregisteredHandler(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	router := api.NewRouter(st, log, testSecret, 1000, 1000)
+	router := api.NewRouter(st, log, testSecret, 1000, 1000, []string{"*"})
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 

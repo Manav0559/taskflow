@@ -80,7 +80,7 @@ func main() {
 	}
 	defer svc.Close()
 
-	router := api.NewRouter(svc, log, cfg.JWTSecret, cfg.RateLimitRPS, cfg.RateLimitBurst)
+	router := api.NewRouter(svc, log, cfg.JWTSecret, cfg.RateLimitRPS, cfg.RateLimitBurst, cfg.CORSAllowedOrigins)
 	tracedRouter := otelhttp.NewHandler(router, "taskflow-api")
 
 	apiServer := &http.Server{Addr: cfg.HTTPAddr, Handler: tracedRouter}

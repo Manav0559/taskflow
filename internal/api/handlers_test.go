@@ -19,7 +19,7 @@ func newTestRouter(t *testing.T) (http.Handler, string) {
 	st := newFakeStore()
 	log := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
 	// High rate limit so validation tests aren't incidentally rate-limited.
-	router := NewRouter(st, log, testSecret, 10000, 10000)
+	router := NewRouter(st, log, testSecret, 10000, 10000, []string{"*"})
 	token, err := MintToken(testSecret, "handler-test", time.Hour)
 	if err != nil {
 		t.Fatalf("MintToken: %v", err)
