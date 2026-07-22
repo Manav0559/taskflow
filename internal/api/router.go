@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 
 	"github.com/manavsingla/taskflow/internal/metrics"
 	"github.com/manavsingla/taskflow/internal/store"
@@ -15,9 +16,20 @@ import (
 
 // NewRouter wires the full HTTP API. jwtSecret is the shared HS256 secret used to
 // verify Authorization: Bearer tokens on /v1/*; rateRPS/rateBurst configure the
-// per-client-IP token bucket applied to the same routes.
-func NewRouter(st store.Store, log *slog.Logger, jwtSecret string, rateRPS float64, rateBurst int) http.Handler {
+// per-client-IP token bucket applied to the same routes. corsOrigins lists the
+// browser origins allowed to call this API (e.g. the web dashboard's origin);
+// pass []string{"*"} to allow any origin, which is safe here since auth uses a
+// bearer token header rather than cookies.
+func NewRouter(st store.Store, log *slog.Logger, jwtSecret string, rateRPS float64, rateBurst int, corsOrigins []string) http.Handler {
 	r := chi.NewRouter()
+
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   corsOrigins,
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 
 	r.Get("/healthz", healthzHandler)
 	r.Handle("/metrics", metrics.Handler())

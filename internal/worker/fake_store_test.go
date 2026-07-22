@@ -67,8 +67,14 @@ func (f *fakeStore) ListDependencies(ctx context.Context, jobID string) ([]strin
 func (f *fakeStore) LatestRunForJob(ctx context.Context, jobID string) (*model.JobRun, error) {
 	return nil, store.ErrNotFound
 }
+func (f *fakeStore) LatestRunsForJobs(ctx context.Context, jobIDs []string) (map[string]*model.JobRun, error) {
+	return map[string]*model.JobRun{}, nil
+}
 func (f *fakeStore) HasActiveRun(ctx context.Context, jobID string) (bool, error) {
 	return false, nil
+}
+func (f *fakeStore) HasActiveRuns(ctx context.Context, jobIDs []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
 }
 func (f *fakeStore) CreateRun(ctx context.Context, jobID string, priority int16, scheduledAt time.Time) (*model.JobRun, error) {
 	return nil, nil

@@ -53,7 +53,7 @@ func main() {
 	}
 	defer func() { _ = shutdownTracing(context.Background()) }()
 
-	pgStore, err := store.New(ctx, cfg.DatabaseURL)
+	pgStore, err := store.New(ctx, cfg.DatabaseURL, cfg.DBMaxConns, cfg.DBMinConns)
 	if err != nil {
 		fatal("connect to database", err)
 	}
@@ -65,7 +65,7 @@ func main() {
 	// Read-replica routing is opt-in: with REPLICA_DATABASE_URL unset, reads stay on
 	// the primary pool, same as before this feature existed.
 	if cfg.ReplicaURL != "" {
-		if err := pgStore.EnableReadReplica(ctx, cfg.ReplicaURL); err != nil {
+		if err := pgStore.EnableReadReplica(ctx, cfg.ReplicaURL, cfg.DBMaxConns, cfg.DBMinConns); err != nil {
 			fatal("connect to read replica", err)
 		}
 		log.Info("read replica enabled for job/run reads")
@@ -80,7 +80,7 @@ func main() {
 	}
 	defer svc.Close()
 
-	router := api.NewRouter(svc, log, cfg.JWTSecret, cfg.RateLimitRPS, cfg.RateLimitBurst)
+	router := api.NewRouter(svc, log, cfg.JWTSecret, cfg.RateLimitRPS, cfg.RateLimitBurst, cfg.CORSAllowedOrigins)
 	tracedRouter := otelhttp.NewHandler(router, "taskflow-api")
 
 	apiServer := &http.Server{Addr: cfg.HTTPAddr, Handler: tracedRouter}

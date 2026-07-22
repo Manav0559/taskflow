@@ -52,7 +52,7 @@ func main() {
 	}
 	defer func() { _ = shutdownTracing(context.Background()) }()
 
-	st, err := store.New(ctx, cfg.DatabaseURL)
+	st, err := store.New(ctx, cfg.DatabaseURL, cfg.DBMaxConns, cfg.DBMinConns)
 	if err != nil {
 		fatal("connect to database", err)
 	}

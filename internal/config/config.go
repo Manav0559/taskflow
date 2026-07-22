@@ -7,35 +7,40 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Config struct {
-	DatabaseURL    string
-	HTTPAddr       string
-	JWTSecret      string
-	LeaseDuration  time.Duration
-	PollInterval   time.Duration
-	WorkerID       string
-	MetricsAddr    string
-	RateLimitRPS   float64
-	RateLimitBurst int
-	Concurrency    int
-	OTLPEndpoint   string
-	RedisAddr      string
-	ReplicaURL     string
+	DatabaseURL        string
+	HTTPAddr           string
+	JWTSecret          string
+	LeaseDuration      time.Duration
+	PollInterval       time.Duration
+	WorkerID           string
+	MetricsAddr        string
+	RateLimitRPS       float64
+	RateLimitBurst     int
+	Concurrency        int
+	OTLPEndpoint       string
+	RedisAddr          string
+	ReplicaURL         string
+	CORSAllowedOrigins []string
+	DBMaxConns         int32
+	DBMinConns         int32
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		DatabaseURL:  getEnv("DATABASE_URL", "postgres://taskflow:taskflow@localhost:5432/taskflow?sslmode=disable"),
-		HTTPAddr:     getEnv("HTTP_ADDR", ":8080"),
-		JWTSecret:    getEnv("JWT_SECRET", ""),
-		MetricsAddr:  getEnv("METRICS_ADDR", ":9090"),
-		WorkerID:     getEnv("WORKER_ID", ""),
-		OTLPEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-		RedisAddr:    getEnv("REDIS_ADDR", ""),
-		ReplicaURL:   getEnv("REPLICA_DATABASE_URL", ""),
+		DatabaseURL:        getEnv("DATABASE_URL", "postgres://taskflow:taskflow@localhost:5432/taskflow?sslmode=disable"),
+		HTTPAddr:           getEnv("HTTP_ADDR", ":8080"),
+		JWTSecret:          getEnv("JWT_SECRET", ""),
+		MetricsAddr:        getEnv("METRICS_ADDR", ":9090"),
+		WorkerID:           getEnv("WORKER_ID", ""),
+		OTLPEndpoint:       getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		RedisAddr:          getEnv("REDIS_ADDR", ""),
+		ReplicaURL:         getEnv("REPLICA_DATABASE_URL", ""),
+		CORSAllowedOrigins: getEnvList("CORS_ALLOWED_ORIGINS", []string{"*"}),
 	}
 
 	var err error
@@ -54,6 +59,16 @@ func Load() (Config, error) {
 	if cfg.Concurrency, err = getEnvInt("WORKER_CONCURRENCY", 4); err != nil {
 		return cfg, err
 	}
+	dbMaxConns, err := getEnvInt("DB_MAX_CONNS", 10)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.DBMaxConns = int32(dbMaxConns)
+	dbMinConns, err := getEnvInt("DB_MIN_CONNS", 2)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.DBMinConns = int32(dbMinConns)
 
 	if cfg.WorkerID == "" {
 		host, _ := os.Hostname()
@@ -92,4 +107,19 @@ func getEnvInt(key string, def int) (int, error) {
 		return def, nil
 	}
 	return strconv.Atoi(v)
+}
+
+func getEnvList(key string, def []string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

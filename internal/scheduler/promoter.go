@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"time"
 
@@ -59,28 +58,39 @@ func (p *Promoter) PromoteOnce(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
+	jobIDs := make([]string, len(jobs))
+	for i, job := range jobs {
+		jobIDs[i] = job.ID
+	}
+
+	// Batched instead of one HasActiveRun/LatestRunForJob call per job: these two are
+	// unconditionally needed for every active job on every tick (unlike the
+	// dependency checks below, which only run for jobs that get past these), so
+	// leaving them per-job made this loop 2N Postgres round trips every tick
+	// regardless of how many jobs were actually due.
+	activeRuns, err := p.Store.HasActiveRuns(ctx, jobIDs)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return 0, err
+	}
+	latestRuns, err := p.Store.LatestRunsForJobs(ctx, jobIDs)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return 0, err
+	}
+
 	promoted := 0
 	now := time.Now()
 
 	for _, job := range jobs {
-		hasActive, err := p.Store.HasActiveRun(ctx, job.ID)
-		if err != nil {
-			p.Logger.Error("check active run failed", "job_id", job.ID, "error", err)
-			continue
-		}
-		if hasActive {
+		if activeRuns[job.ID] {
 			continue
 		}
 
 		var lastScheduledAt *time.Time
-		lastRun, err := p.Store.LatestRunForJob(ctx, job.ID)
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			lastScheduledAt = nil
-		case err != nil:
-			p.Logger.Error("latest run lookup failed", "job_id", job.ID, "error", err)
-			continue
-		default:
+		if lastRun, ok := latestRuns[job.ID]; ok {
 			lastScheduledAt = &lastRun.ScheduledAt
 		}
 

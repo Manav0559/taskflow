@@ -12,6 +12,7 @@ dead-lettering permanently failed attempts.
 ```mermaid
 flowchart LR
     Client -->|REST + JWT bearer token| API[API service]
+    Dashboard["Web dashboard<br/>(web/)"] -->|REST + JWT| API
     API --> PG[(Postgres)]
     Scheduler["Scheduler<br/>(leader-elected)"] --> PG
     Worker["Worker fleet"] --> PG
@@ -20,6 +21,7 @@ flowchart LR
     Prometheus -->|scrape /metrics| Scheduler
     Prometheus -->|scrape /metrics| Worker
     Grafana -->|query| Prometheus
+    Dashboard -->|query /api/v1/*| Prometheus
 ```
 
 Postgres is both the system of record for job/run metadata *and* the queue: workers
@@ -102,6 +104,23 @@ exercising the timeout/retry path), and `http_call` (makes an HTTP request descr
 
 Full endpoint reference: [docs/API.md](docs/API.md).
 
+### Web dashboard
+
+A React + TypeScript dashboard lives in [`web/`](web/) — job/run browsing and
+management, worker health, and cluster-wide metrics (queue depth, cache hit rate,
+leader status, latency, per-worker throughput) sourced live from Prometheus.
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`, then paste the API base URL and a bearer token (minted
+as above) into the connect screen. Prometheus metrics are optional and configured
+separately in Settings — default `http://localhost:9093` matches the docker-compose
+`prometheus` service. See [web/README.md](web/README.md) for details.
+
 ## What this project demonstrates
 
 - **REST API design** — resource-oriented routes, input validation, idempotent create,
@@ -132,6 +151,8 @@ Full endpoint reference: [docs/API.md](docs/API.md).
   via Grafana (`docker/prometheus/prometheus.yml`); OpenTelemetry distributed tracing
   via a bundled Jaeger, instrumenting every HTTP request and every Postgres query
   automatically (`internal/tracing/`, `internal/store/tracing.go`)
+- **React dashboard** — job/run management, worker health, and cluster metrics queried
+  live from Prometheus, built on a validated accessible color system (`web/`)
 - **Infra as code** — Docker Compose for local dev, Kubernetes manifests (applied and
   verified against a real cluster, HPAs scaling on real metrics-server readings —
   see [VERIFICATION.md](docs/VERIFICATION.md#kubernetes)), Terraform for AWS

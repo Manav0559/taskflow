@@ -6,6 +6,7 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -22,6 +23,16 @@ import (
 var tracer = otel.Tracer("taskflow/worker")
 
 const maxBackoff = 5 * time.Minute
+
+// equalJitter halves d and adds a random amount up to the other half (AWS's "equal
+// jitter" strategy). Without this, every run that failed at the same moment - e.g.
+// because a shared downstream dependency went down - retries after exactly the same
+// deterministic 1<<attempt delay, so they all hit Postgres and that dependency again
+// in lockstep instead of spreading out.
+func equalJitter(d time.Duration) time.Duration {
+	half := d / 2
+	return half + time.Duration(rand.Int63n(int64(half)+1))
+}
 
 type Pool struct {
 	Store         store.Store
@@ -189,6 +200,7 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		if backoff > maxBackoff {
 			backoff = maxBackoff
 		}
+		backoff = equalJitter(backoff)
 		if ferr := p.Store.FailRun(ctx, run.ID, err.Error(), true, backoff); ferr != nil {
 			p.Logger.Error("fail run failed", "run_id", run.ID, "error", ferr)
 		}
