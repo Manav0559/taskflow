@@ -43,12 +43,23 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func New(ctx context.Context, databaseURL string) (*PostgresStore, error) {
+// New opens the primary connection pool. maxConns/minConns size it explicitly -
+// left unset (zero value), pgxpool silently defaults to max(4, NumCPU), which is
+// shared by every API read, every worker's leasing transaction, the janitor, and
+// the scheduler's promotion queries, and quietly shrinks on CPU-constrained
+// containers. Pass 0 for either to keep pgx's own default for that setting.
+func New(ctx context.Context, databaseURL string, maxConns, minConns int32) (*PostgresStore, error) {
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
 	poolConfig.ConnConfig.Tracer = newOtelQueryTracer()
+	if maxConns > 0 {
+		poolConfig.MaxConns = maxConns
+	}
+	if minConns > 0 {
+		poolConfig.MinConns = minConns
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -79,12 +90,18 @@ func (s *PostgresStore) Pool() *pgxpool.Pool {
 // the primary pool. Writes and transactional reads (LeaseNextRun, MarkDead, ...)
 // always stay on the primary: replication lag makes a replica read of run-leasing
 // state unsafe, so only genuinely read-only, staleness-tolerant queries move here.
-func (s *PostgresStore) EnableReadReplica(ctx context.Context, replicaURL string) error {
+func (s *PostgresStore) EnableReadReplica(ctx context.Context, replicaURL string, maxConns, minConns int32) error {
 	poolConfig, err := pgxpool.ParseConfig(replicaURL)
 	if err != nil {
 		return fmt.Errorf("parse replica database url: %w", err)
 	}
 	poolConfig.ConnConfig.Tracer = newOtelQueryTracer()
+	if maxConns > 0 {
+		poolConfig.MaxConns = maxConns
+	}
+	if minConns > 0 {
+		poolConfig.MinConns = minConns
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -317,6 +334,58 @@ func (s *PostgresStore) HasActiveRun(ctx context.Context, jobID string) (bool, e
 		SELECT EXISTS(SELECT 1 FROM job_runs WHERE job_id = $1 AND status IN ('pending','leased','running'))
 	`, jobID).Scan(&exists)
 	return exists, err
+}
+
+func (s *PostgresStore) LatestRunsForJobs(ctx context.Context, jobIDs []string) (map[string]*model.JobRun, error) {
+	result := make(map[string]*model.JobRun, len(jobIDs))
+	if len(jobIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := s.readPool().Query(ctx, `
+		SELECT DISTINCT ON (job_id) `+runColumns+`
+		FROM job_runs
+		WHERE job_id = ANY($1::uuid[])
+		ORDER BY job_id, created_at DESC
+	`, jobIDs)
+	if err != nil {
+		return nil, fmt.Errorf("latest runs for jobs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("latest runs for jobs: scan: %w", err)
+		}
+		result[run.JobID] = run
+	}
+	return result, rows.Err()
+}
+
+func (s *PostgresStore) HasActiveRuns(ctx context.Context, jobIDs []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(jobIDs))
+	if len(jobIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := s.readPool().Query(ctx, `
+		SELECT DISTINCT job_id FROM job_runs
+		WHERE job_id = ANY($1::uuid[]) AND status IN ('pending','leased','running')
+	`, jobIDs)
+	if err != nil {
+		return nil, fmt.Errorf("has active runs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var jobID string
+		if err := rows.Scan(&jobID); err != nil {
+			return nil, fmt.Errorf("has active runs: scan: %w", err)
+		}
+		result[jobID] = true
+	}
+	return result, rows.Err()
 }
 
 func (s *PostgresStore) CreateRun(ctx context.Context, jobID string, priority int16, scheduledAt time.Time) (*model.JobRun, error) {

@@ -26,6 +26,8 @@ type Config struct {
 	RedisAddr          string
 	ReplicaURL         string
 	CORSAllowedOrigins []string
+	DBMaxConns         int32
+	DBMinConns         int32
 }
 
 func Load() (Config, error) {
@@ -57,6 +59,16 @@ func Load() (Config, error) {
 	if cfg.Concurrency, err = getEnvInt("WORKER_CONCURRENCY", 4); err != nil {
 		return cfg, err
 	}
+	dbMaxConns, err := getEnvInt("DB_MAX_CONNS", 10)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.DBMaxConns = int32(dbMaxConns)
+	dbMinConns, err := getEnvInt("DB_MIN_CONNS", 2)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.DBMinConns = int32(dbMinConns)
 
 	if cfg.WorkerID == "" {
 		host, _ := os.Hostname()

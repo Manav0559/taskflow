@@ -36,7 +36,7 @@ func TestJobLifecycleEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	st, err := store.New(ctx, dbURL)
+	st, err := store.New(ctx, dbURL, 10, 2)
 	if err != nil {
 		t.Fatalf("connect to database: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestDeadLetterOnUnregisteredHandler(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	st, err := store.New(ctx, dbURL)
+	st, err := store.New(ctx, dbURL, 10, 2)
 	if err != nil {
 		t.Fatalf("connect to database: %v", err)
 	}
