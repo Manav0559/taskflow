@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/manavsingla/taskflow/internal/model"
-	"github.com/manavsingla/taskflow/internal/store"
+	"github.com/Manav0559/taskflow/internal/model"
+	"github.com/Manav0559/taskflow/internal/store"
 )
 
 // fakeStore is a minimal in-memory store.Store implementation used to drive

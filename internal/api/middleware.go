@@ -8,7 +8,7 @@ import (
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-	"github.com/manavsingla/taskflow/internal/metrics"
+	"github.com/Manav0559/taskflow/internal/metrics"
 )
 
 // requestLogger logs one line per request and records taskflow_http_request_duration_seconds.

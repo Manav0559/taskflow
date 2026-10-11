@@ -12,8 +12,8 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"github.com/manavsingla/taskflow/internal/model"
-	"github.com/manavsingla/taskflow/internal/store"
+	"github.com/Manav0559/taskflow/internal/model"
+	"github.com/Manav0559/taskflow/internal/store"
 )
 
 // NextRunDue reports whether a job is currently due to have a new run created for it.

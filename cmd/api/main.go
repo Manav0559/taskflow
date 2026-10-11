@@ -14,13 +14,13 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"github.com/manavsingla/taskflow/internal/api"
-	"github.com/manavsingla/taskflow/internal/cache"
-	"github.com/manavsingla/taskflow/internal/config"
-	"github.com/manavsingla/taskflow/internal/logger"
-	"github.com/manavsingla/taskflow/internal/metrics"
-	"github.com/manavsingla/taskflow/internal/store"
-	"github.com/manavsingla/taskflow/internal/tracing"
+	"github.com/Manav0559/taskflow/internal/api"
+	"github.com/Manav0559/taskflow/internal/cache"
+	"github.com/Manav0559/taskflow/internal/config"
+	"github.com/Manav0559/taskflow/internal/logger"
+	"github.com/Manav0559/taskflow/internal/metrics"
+	"github.com/Manav0559/taskflow/internal/store"
+	"github.com/Manav0559/taskflow/internal/tracing"
 )
 
 func main() {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/manavsingla/taskflow/internal/model"
+	"github.com/Manav0559/taskflow/internal/model"
 )
 
 func TestEchoHandler(t *testing.T) {

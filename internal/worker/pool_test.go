@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/manavsingla/taskflow/internal/model"
+	"github.com/Manav0559/taskflow/internal/model"
 )
 
 func testLogger() *slog.Logger {

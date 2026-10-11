@@ -14,9 +14,9 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/manavsingla/taskflow/internal/metrics"
-	"github.com/manavsingla/taskflow/internal/model"
-	"github.com/manavsingla/taskflow/internal/store"
+	"github.com/Manav0559/taskflow/internal/metrics"
+	"github.com/Manav0559/taskflow/internal/model"
+	"github.com/Manav0559/taskflow/internal/store"
 )
 
 var tracer = otel.Tracer("taskflow/worker")

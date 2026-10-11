@@ -1,4 +1,4 @@
-module github.com/manavsingla/taskflow
+module github.com/Manav0559/taskflow
 
 go 1.26.5
 

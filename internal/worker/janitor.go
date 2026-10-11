@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/manavsingla/taskflow/internal/metrics"
+	"github.com/Manav0559/taskflow/internal/metrics"
 )
 
 // heartbeatLoop reuses PollInterval so a worker's liveness signal refreshes at
