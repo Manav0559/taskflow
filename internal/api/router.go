@@ -9,8 +9,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-	"github.com/manavsingla/taskflow/internal/metrics"
-	"github.com/manavsingla/taskflow/internal/store"
+	"github.com/Manav0559/taskflow/internal/metrics"
+	"github.com/Manav0559/taskflow/internal/store"
 )
 
 // NewRouter wires the full HTTP API. jwtSecret is the shared HS256 secret used to

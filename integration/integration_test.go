@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/manavsingla/taskflow/internal/api"
-	"github.com/manavsingla/taskflow/internal/model"
-	"github.com/manavsingla/taskflow/internal/scheduler"
-	"github.com/manavsingla/taskflow/internal/store"
-	"github.com/manavsingla/taskflow/internal/worker"
+	"github.com/Manav0559/taskflow/internal/api"
+	"github.com/Manav0559/taskflow/internal/model"
+	"github.com/Manav0559/taskflow/internal/scheduler"
+	"github.com/Manav0559/taskflow/internal/store"
+	"github.com/Manav0559/taskflow/internal/worker"
 )
 
 const testSecret = "integration-test-secret"

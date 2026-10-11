@@ -27,9 +27,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/manavsingla/taskflow/internal/metrics"
-	"github.com/manavsingla/taskflow/internal/model"
-	"github.com/manavsingla/taskflow/internal/store"
+	"github.com/Manav0559/taskflow/internal/metrics"
+	"github.com/Manav0559/taskflow/internal/model"
+	"github.com/Manav0559/taskflow/internal/store"
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/manavsingla/taskflow/internal/model"
+	"github.com/Manav0559/taskflow/internal/model"
 )
 
 // ErrNotFound is returned by Get*/single-row lookups when nothing matches.
