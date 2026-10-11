@@ -122,6 +122,10 @@ Full endpoint reference: [docs/API.md](docs/API.md).
   attempts-exhausted runs land in `dead_letters` (`internal/worker/pool.go`)
 - **Crash recovery** — lease expiry + a janitor loop reclaims runs orphaned by a dead
   worker (`internal/worker/janitor.go`)
+- **Lease fencing** — run state transitions are conditional on `(leased_by, attempt)`, so
+  a worker whose lease expired and was re-leased gets `ErrLeaseLost` instead of
+  overwriting the new holder's result; leases are renewed while a handler runs
+  (`internal/store/postgres.go`, [docs/correctness.md](docs/correctness.md))
 - **JWT auth** — shared-secret HS256 bearer tokens (`internal/api/auth.go`)
 - **Hand-rolled rate limiting** — per-IP in-memory token bucket, no external dependency
   (`internal/api/ratelimit.go`)
@@ -139,7 +143,8 @@ Full endpoint reference: [docs/API.md](docs/API.md).
   `.github/workflows/ci.yml`)
 
 Read more: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (design decisions and
-trade-offs), [docs/API.md](docs/API.md) (endpoint reference),
+trade-offs), [docs/correctness.md](docs/correctness.md) (leases, fencing, SKIP LOCKED,
+leader failover), [docs/API.md](docs/API.md) (endpoint reference),
 [docs/VERIFICATION.md](docs/VERIFICATION.md) (real load test numbers, rate-limit
 enforcement, and a crash-recovery chaos test — not just claims), and
 [docs/DEVLOG.md](docs/DEVLOG.md) (how this was built).

@@ -373,82 +373,98 @@ func (s *PostgresStore) LeaseNextRun(ctx context.Context, workerID string, lease
 	return run, job, nil
 }
 
-func (s *PostgresStore) ExtendLease(ctx context.Context, runID string, workerID string, extend time.Duration) error {
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE job_runs SET lease_expires_at = now() + $1 WHERE id = $2 AND leased_by = $3
-	`, extend, runID, workerID)
+// leaseFence is the WHERE clause shared by every fenced run-lifecycle UPDATE. A write
+// only lands while the row is still held by the caller's lease; after a reclaim
+// (leased_by = NULL) or a re-lease (attempt incremented) it matches zero rows.
+const leaseFence = `id = @run_id AND leased_by = @worker_id AND attempt = @attempt`
+
+func leaseArgs(l Lease, extra pgx.NamedArgs) pgx.NamedArgs {
+	args := pgx.NamedArgs{"run_id": l.RunID, "worker_id": l.WorkerID, "attempt": l.Attempt}
+	for k, v := range extra {
+		args[k] = v
+	}
+	return args
+}
+
+// fencedMiss classifies a fenced write that matched zero rows: ErrNotFound if the run
+// does not exist at all, otherwise ErrLeaseLost.
+func fencedMiss(ctx context.Context, q querier, runID string) error {
+	var exists bool
+	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM job_runs WHERE id = $1)`, runID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return ErrLeaseLost
+}
+
+func (s *PostgresStore) fencedExec(ctx context.Context, l Lease, sql string, extra pgx.NamedArgs) error {
+	tag, err := s.pool.Exec(ctx, sql, leaseArgs(l, extra))
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return fencedMiss(ctx, s.pool, l.RunID)
 	}
 	return nil
 }
 
-func (s *PostgresStore) MarkRunning(ctx context.Context, runID string) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE job_runs SET status = 'running', started_at = now() WHERE id = $1`, runID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+func (s *PostgresStore) ExtendLease(ctx context.Context, l Lease, extend time.Duration) error {
+	return s.fencedExec(ctx, l, `
+		UPDATE job_runs SET lease_expires_at = now() + @extend
+		WHERE `+leaseFence+` AND status IN ('leased', 'running')
+	`, pgx.NamedArgs{"extend": extend})
 }
 
-func (s *PostgresStore) CompleteRun(ctx context.Context, runID string, result map[string]any) error {
+func (s *PostgresStore) MarkRunning(ctx context.Context, l Lease) error {
+	return s.fencedExec(ctx, l, `
+		UPDATE job_runs SET status = 'running', started_at = now()
+		WHERE `+leaseFence+` AND status = 'leased'
+	`, nil)
+}
+
+func (s *PostgresStore) CompleteRun(ctx context.Context, l Lease, result map[string]any) error {
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("marshal result: %w", err)
 	}
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE job_runs SET status = 'succeeded', finished_at = now(), result = $1 WHERE id = $2
-	`, raw, runID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.fencedExec(ctx, l, `
+		UPDATE job_runs SET status = 'succeeded', finished_at = now(), result = @result
+		WHERE `+leaseFence+` AND status IN ('leased', 'running')
+	`, pgx.NamedArgs{"result": raw})
 }
 
-func (s *PostgresStore) FailRun(ctx context.Context, runID string, errMsg string, requeue bool, backoff time.Duration) error {
-	var tag pgconn.CommandTag
-	var err error
+func (s *PostgresStore) FailRun(ctx context.Context, l Lease, errMsg string, requeue bool, backoff time.Duration) error {
 	if requeue {
-		tag, err = s.pool.Exec(ctx, `
+		return s.fencedExec(ctx, l, `
 			UPDATE job_runs
-			SET status = 'pending', scheduled_at = now() + $1, error = $2,
+			SET status = 'pending', scheduled_at = now() + @backoff, error = @error,
 			    leased_by = NULL, leased_at = NULL, lease_expires_at = NULL
-			WHERE id = $3
-		`, backoff, errMsg, runID)
-	} else {
-		tag, err = s.pool.Exec(ctx, `
-			UPDATE job_runs SET status = 'failed', finished_at = now(), error = $1 WHERE id = $2
-		`, errMsg, runID)
+			WHERE `+leaseFence+` AND status IN ('leased', 'running')
+		`, pgx.NamedArgs{"backoff": backoff, "error": errMsg})
 	}
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.fencedExec(ctx, l, `
+		UPDATE job_runs SET status = 'failed', finished_at = now(), error = @error
+		WHERE `+leaseFence+` AND status IN ('leased', 'running')
+	`, pgx.NamedArgs{"error": errMsg})
 }
 
-func (s *PostgresStore) MarkDead(ctx context.Context, runID string, reason string) error {
+func (s *PostgresStore) MarkDead(ctx context.Context, l Lease, reason string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	run, err := fetchRun(ctx, tx, runID)
+	// Lock the row under the same fence so the dead_letters insert and the status
+	// change are applied only by the lease that failed the run.
+	row := tx.QueryRow(ctx, `SELECT `+runColumns+` FROM job_runs
+		WHERE `+leaseFence+` AND status = 'failed' FOR UPDATE`, leaseArgs(l, nil))
+	run, err := scanRun(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
+			return fencedMiss(ctx, tx, l.RunID)
 		}
 		return err
 	}
@@ -460,11 +476,11 @@ func (s *PostgresStore) MarkDead(ctx context.Context, runID string, reason strin
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO dead_letters (job_run_id, reason, payload) VALUES ($1, $2, $3)
-	`, runID, reason, payloadRaw); err != nil {
+	`, l.RunID, reason, payloadRaw); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, `UPDATE job_runs SET status = 'dead' WHERE id = $1`, runID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE job_runs SET status = 'dead' WHERE id = $1`, l.RunID); err != nil {
 		return err
 	}
 

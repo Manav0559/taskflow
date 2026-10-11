@@ -5,8 +5,10 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -124,6 +126,81 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// renewLease extends the lease every LeaseDuration/3 until stop is closed or runCtx
+// ends. It deliberately stops renewing once runCtx is done (job timeout): a handler
+// that ignores cancellation then loses its lease after one more LeaseDuration and the
+// run is reclaimed, instead of being held forever. On ErrLeaseLost it sets lost and
+// cancels the handler's context.
+func (p *Pool) renewLease(runCtx context.Context, cancel context.CancelFunc, stop <-chan struct{}, lease store.Lease, lost *atomic.Bool) {
+	interval := p.LeaseDuration / 3
+	if interval <= 0 {
+		interval = p.LeaseDuration
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-runCtx.Done():
+			return
+		case <-ticker.C:
+			err := p.Store.ExtendLease(runCtx, lease, p.LeaseDuration)
+			switch {
+			case err == nil:
+			case errors.Is(err, store.ErrLeaseLost):
+				lost.Store(true)
+				cancel()
+				return
+			case runCtx.Err() != nil:
+				return
+			default:
+				// Transient (e.g. DB blip): keep the handler running and try again on the
+				// next tick; the lease has two more intervals before it expires.
+				p.Logger.Warn("extend lease failed", "run_id", lease.RunID, "error", err)
+			}
+		}
+	}
+}
+
+// leaseLost logs and counts a fenced write that was rejected because this worker no
+// longer holds the run's lease. The run belongs to whoever holds the current lease
+// (or is pending again), so the only correct action is to drop it: retrying would
+// fail the same way and could only produce a retry storm.
+func (p *Pool) leaseLost(span trace.Span, op string, run *model.JobRun, job *model.Job) {
+	metrics.LeasesLost.Inc()
+	span.SetStatus(codes.Error, store.ErrLeaseLost.Error())
+	p.Logger.Warn("lease lost, dropping run",
+		"op", op, "run_id", run.ID, "job_id", job.ID, "job_name", job.Name, "attempt", run.Attempt)
+}
+
+// recordErr handles the error from a fenced store write. It returns true if the
+// lease was lost, in which case the caller must stop processing the run.
+func (p *Pool) recordErr(span trace.Span, op string, err error, run *model.JobRun, job *model.Job) (lost bool) {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, store.ErrLeaseLost) {
+		p.leaseLost(span, op, run, job)
+		return true
+	}
+	p.Logger.Error(op+" failed", "run_id", run.ID, "error", err)
+	span.SetStatus(codes.Error, op+" failed")
+	return false
+}
+
+// writeFailed reports whether a terminal store write did not land, logging it via
+// recordErr. The caller must then stop processing the run: the state the next step
+// (MarkDead, or the completion metrics) assumes was never written. After a transient
+// CompleteRun/FailRun error the run is still leased, so the janitor reclaims it once
+// the lease expires; after ErrLeaseLost it belongs to someone else. (A MarkDead
+// failure leaves the run 'failed'; see docs/correctness.md, Known gaps.)
+func (p *Pool) writeFailed(span trace.Span, op string, err error, run *model.JobRun, job *model.Job) bool {
+	p.recordErr(span, op, err, run, job)
+	return err != nil
+}
+
 func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job) {
 	ctx, span := tracer.Start(ctx, "worker.executeOne", trace.WithAttributes(
 		attribute.String("job.id", job.ID),
@@ -133,17 +210,19 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 	))
 	defer span.End()
 
+	lease := store.LeaseOf(run, p.WorkerID)
+
 	p.mu.RLock()
 	h, ok := p.handlers[job.Name]
 	p.mu.RUnlock()
 
 	if !ok {
 		msg := "no handler registered for job: " + job.Name
-		if err := p.Store.FailRun(ctx, run.ID, msg, false, 0); err != nil {
-			p.Logger.Error("fail run failed", "run_id", run.ID, "error", err)
+		if p.writeFailed(span, "fail run", p.Store.FailRun(ctx, lease, msg, false, 0), run, job) {
+			return
 		}
-		if err := p.Store.MarkDead(ctx, run.ID, "no handler"); err != nil {
-			p.Logger.Error("mark dead failed", "run_id", run.ID, "error", err)
+		if p.writeFailed(span, "mark dead", p.Store.MarkDead(ctx, lease, "no handler"), run, job) {
+			return
 		}
 		metrics.RunsCompleted.WithLabelValues("dead").Inc()
 		span.SetStatus(codes.Error, msg)
@@ -152,17 +231,37 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		return
 	}
 
-	if err := p.Store.MarkRunning(ctx, run.ID); err != nil {
-		p.Logger.Error("mark running failed", "run_id", run.ID, "error", err)
+	if p.recordErr(span, "mark running", p.Store.MarkRunning(ctx, lease), run, job) {
+		return
 	}
 	metrics.RunsLeased.WithLabelValues(p.WorkerID).Inc()
 
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(job.TimeoutSeconds)*time.Second)
 	defer cancel()
 
+	// Keep the lease alive while the handler runs. If renewal discovers the lease is
+	// gone, the handler's context is cancelled and nothing more is written.
+	stopRenew := make(chan struct{})
+	var renewWG sync.WaitGroup
+	var lost atomic.Bool
+	if p.LeaseDuration > 0 {
+		renewWG.Add(1)
+		go func() {
+			defer renewWG.Done()
+			p.renewLease(runCtx, cancel, stopRenew, lease, &lost)
+		}()
+	}
+
 	start := time.Now()
 	result, err := h(runCtx, job, run)
 	metrics.RunDuration.Observe(time.Since(start).Seconds())
+
+	close(stopRenew)
+	renewWG.Wait()
+	if lost.Load() {
+		p.leaseLost(span, "extend lease", run, job)
+		return
+	}
 
 	// Defensive: a handler that ignores ctx and returns nil error on a timed-out
 	// run should still be treated as a failure, not a success.
@@ -171,8 +270,8 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 	}
 
 	if err == nil {
-		if cerr := p.Store.CompleteRun(ctx, run.ID, result); cerr != nil {
-			p.Logger.Error("complete run failed", "run_id", run.ID, "error", cerr)
+		if p.writeFailed(span, "complete run", p.Store.CompleteRun(ctx, lease, result), run, job) {
+			return
 		}
 		metrics.RunsCompleted.WithLabelValues("succeeded").Inc()
 		span.SetStatus(codes.Ok, "")
@@ -189,8 +288,8 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		if backoff > maxBackoff {
 			backoff = maxBackoff
 		}
-		if ferr := p.Store.FailRun(ctx, run.ID, err.Error(), true, backoff); ferr != nil {
-			p.Logger.Error("fail run failed", "run_id", run.ID, "error", ferr)
+		if p.writeFailed(span, "fail run", p.Store.FailRun(ctx, lease, err.Error(), true, backoff), run, job) {
+			return
 		}
 		metrics.RunsCompleted.WithLabelValues("failed").Inc()
 		p.Logger.Warn("job run failed, will retry",
@@ -200,11 +299,11 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		return
 	}
 
-	if ferr := p.Store.FailRun(ctx, run.ID, err.Error(), false, 0); ferr != nil {
-		p.Logger.Error("fail run failed", "run_id", run.ID, "error", ferr)
+	if p.writeFailed(span, "fail run", p.Store.FailRun(ctx, lease, err.Error(), false, 0), run, job) {
+		return
 	}
-	if derr := p.Store.MarkDead(ctx, run.ID, "max attempts exceeded"); derr != nil {
-		p.Logger.Error("mark dead failed", "run_id", run.ID, "error", derr)
+	if p.writeFailed(span, "mark dead", p.Store.MarkDead(ctx, lease, "max attempts exceeded"), run, job) {
+		return
 	}
 	metrics.RunsCompleted.WithLabelValues("dead").Inc()
 	span.SetStatus(codes.Error, err.Error())
