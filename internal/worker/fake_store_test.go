@@ -16,26 +16,34 @@ import (
 type fakeStore struct {
 	mu sync.Mutex
 
-	markRunningCalls []string
+	markRunningCalls []store.Lease
 	completeRunCalls []completeRunCall
 	failRunCalls     []failRunCall
 	markDeadCalls    []markDeadCall
+	extendLeaseCalls []store.Lease
+
+	// Errors returned by the corresponding lifecycle methods (nil = success), so
+	// tests can simulate a fenced write being rejected with store.ErrLeaseLost.
+	markRunningErr error
+	completeRunErr error
+	failRunErr     error
+	extendLeaseErr error
 }
 
 type completeRunCall struct {
-	runID  string
+	lease  store.Lease
 	result map[string]any
 }
 
 type failRunCall struct {
-	runID   string
+	lease   store.Lease
 	errMsg  string
 	requeue bool
 	backoff time.Duration
 }
 
 type markDeadCall struct {
-	runID  string
+	lease  store.Lease
 	reason string
 }
 
@@ -80,35 +88,38 @@ func (f *fakeStore) LeaseNextRun(ctx context.Context, workerID string, leaseDura
 	return nil, nil, nil
 }
 
-func (f *fakeStore) ExtendLease(ctx context.Context, runID string, workerID string, extend time.Duration) error {
-	return nil
-}
-
-func (f *fakeStore) MarkRunning(ctx context.Context, runID string) error {
+func (f *fakeStore) ExtendLease(ctx context.Context, lease store.Lease, extend time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.markRunningCalls = append(f.markRunningCalls, runID)
-	return nil
+	f.extendLeaseCalls = append(f.extendLeaseCalls, lease)
+	return f.extendLeaseErr
 }
 
-func (f *fakeStore) CompleteRun(ctx context.Context, runID string, result map[string]any) error {
+func (f *fakeStore) MarkRunning(ctx context.Context, lease store.Lease) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.completeRunCalls = append(f.completeRunCalls, completeRunCall{runID: runID, result: result})
-	return nil
+	f.markRunningCalls = append(f.markRunningCalls, lease)
+	return f.markRunningErr
 }
 
-func (f *fakeStore) FailRun(ctx context.Context, runID string, errMsg string, requeue bool, backoff time.Duration) error {
+func (f *fakeStore) CompleteRun(ctx context.Context, lease store.Lease, result map[string]any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.failRunCalls = append(f.failRunCalls, failRunCall{runID: runID, errMsg: errMsg, requeue: requeue, backoff: backoff})
-	return nil
+	f.completeRunCalls = append(f.completeRunCalls, completeRunCall{lease: lease, result: result})
+	return f.completeRunErr
 }
 
-func (f *fakeStore) MarkDead(ctx context.Context, runID string, reason string) error {
+func (f *fakeStore) FailRun(ctx context.Context, lease store.Lease, errMsg string, requeue bool, backoff time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.markDeadCalls = append(f.markDeadCalls, markDeadCall{runID: runID, reason: reason})
+	f.failRunCalls = append(f.failRunCalls, failRunCall{lease: lease, errMsg: errMsg, requeue: requeue, backoff: backoff})
+	return f.failRunErr
+}
+
+func (f *fakeStore) MarkDead(ctx context.Context, lease store.Lease, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markDeadCalls = append(f.markDeadCalls, markDeadCall{lease: lease, reason: reason})
 	return nil
 }
 

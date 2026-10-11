@@ -5,6 +5,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -124,6 +125,31 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// leaseLost logs and counts a fenced write that was rejected because this worker no
+// longer holds the run's lease. The run belongs to whoever holds the current lease
+// (or is pending again), so the only correct action is to drop it: retrying would
+// fail the same way and could only produce a retry storm.
+func (p *Pool) leaseLost(span trace.Span, op string, run *model.JobRun, job *model.Job) {
+	metrics.LeasesLost.Inc()
+	span.SetStatus(codes.Error, store.ErrLeaseLost.Error())
+	p.Logger.Warn("lease lost, dropping run",
+		"op", op, "run_id", run.ID, "job_id", job.ID, "job_name", job.Name, "attempt", run.Attempt)
+}
+
+// recordErr handles the error from a fenced store write. It returns true if the
+// lease was lost, in which case the caller must stop processing the run.
+func (p *Pool) recordErr(span trace.Span, op string, err error, run *model.JobRun, job *model.Job) (lost bool) {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, store.ErrLeaseLost) {
+		p.leaseLost(span, op, run, job)
+		return true
+	}
+	p.Logger.Error(op+" failed", "run_id", run.ID, "error", err)
+	return false
+}
+
 func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job) {
 	ctx, span := tracer.Start(ctx, "worker.executeOne", trace.WithAttributes(
 		attribute.String("job.id", job.ID),
@@ -133,17 +159,19 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 	))
 	defer span.End()
 
+	lease := store.LeaseOf(run, p.WorkerID)
+
 	p.mu.RLock()
 	h, ok := p.handlers[job.Name]
 	p.mu.RUnlock()
 
 	if !ok {
 		msg := "no handler registered for job: " + job.Name
-		if err := p.Store.FailRun(ctx, run.ID, msg, false, 0); err != nil {
-			p.Logger.Error("fail run failed", "run_id", run.ID, "error", err)
+		if p.recordErr(span, "fail run", p.Store.FailRun(ctx, lease, msg, false, 0), run, job) {
+			return
 		}
-		if err := p.Store.MarkDead(ctx, run.ID, "no handler"); err != nil {
-			p.Logger.Error("mark dead failed", "run_id", run.ID, "error", err)
+		if p.recordErr(span, "mark dead", p.Store.MarkDead(ctx, lease, "no handler"), run, job) {
+			return
 		}
 		metrics.RunsCompleted.WithLabelValues("dead").Inc()
 		span.SetStatus(codes.Error, msg)
@@ -152,8 +180,8 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		return
 	}
 
-	if err := p.Store.MarkRunning(ctx, run.ID); err != nil {
-		p.Logger.Error("mark running failed", "run_id", run.ID, "error", err)
+	if p.recordErr(span, "mark running", p.Store.MarkRunning(ctx, lease), run, job) {
+		return
 	}
 	metrics.RunsLeased.WithLabelValues(p.WorkerID).Inc()
 
@@ -171,8 +199,8 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 	}
 
 	if err == nil {
-		if cerr := p.Store.CompleteRun(ctx, run.ID, result); cerr != nil {
-			p.Logger.Error("complete run failed", "run_id", run.ID, "error", cerr)
+		if p.recordErr(span, "complete run", p.Store.CompleteRun(ctx, lease, result), run, job) {
+			return
 		}
 		metrics.RunsCompleted.WithLabelValues("succeeded").Inc()
 		span.SetStatus(codes.Ok, "")
@@ -189,8 +217,8 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		if backoff > maxBackoff {
 			backoff = maxBackoff
 		}
-		if ferr := p.Store.FailRun(ctx, run.ID, err.Error(), true, backoff); ferr != nil {
-			p.Logger.Error("fail run failed", "run_id", run.ID, "error", ferr)
+		if p.recordErr(span, "fail run", p.Store.FailRun(ctx, lease, err.Error(), true, backoff), run, job) {
+			return
 		}
 		metrics.RunsCompleted.WithLabelValues("failed").Inc()
 		p.Logger.Warn("job run failed, will retry",
@@ -200,11 +228,11 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		return
 	}
 
-	if ferr := p.Store.FailRun(ctx, run.ID, err.Error(), false, 0); ferr != nil {
-		p.Logger.Error("fail run failed", "run_id", run.ID, "error", ferr)
+	if p.recordErr(span, "fail run", p.Store.FailRun(ctx, lease, err.Error(), false, 0), run, job) {
+		return
 	}
-	if derr := p.Store.MarkDead(ctx, run.ID, "max attempts exceeded"); derr != nil {
-		p.Logger.Error("mark dead failed", "run_id", run.ID, "error", derr)
+	if p.recordErr(span, "mark dead", p.Store.MarkDead(ctx, lease, "max attempts exceeded"), run, job) {
+		return
 	}
 	metrics.RunsCompleted.WithLabelValues("dead").Inc()
 	span.SetStatus(codes.Error, err.Error())

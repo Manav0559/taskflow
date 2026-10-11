@@ -44,6 +44,11 @@ var (
 		Help: "Total number of runs reclaimed from a worker whose lease expired.",
 	})
 
+	LeasesLost = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "taskflow_leases_lost_total",
+		Help: "Total number of run state transitions rejected because the worker's lease was no longer current (fenced writes).",
+	})
+
 	HTTPRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "taskflow_http_request_duration_seconds",
 		Help:    "HTTP request duration by route and status code.",

@@ -122,21 +122,21 @@ func (s *fakeStore) LeaseNextRun(ctx context.Context, workerID string, leaseDura
 	return nil, nil, nil
 }
 
-func (s *fakeStore) ExtendLease(ctx context.Context, runID, workerID string, extend time.Duration) error {
+func (s *fakeStore) ExtendLease(ctx context.Context, lease store.Lease, extend time.Duration) error {
 	return nil
 }
 
-func (s *fakeStore) MarkRunning(ctx context.Context, runID string) error { return nil }
+func (s *fakeStore) MarkRunning(ctx context.Context, lease store.Lease) error { return nil }
 
-func (s *fakeStore) CompleteRun(ctx context.Context, runID string, result map[string]any) error {
+func (s *fakeStore) CompleteRun(ctx context.Context, lease store.Lease, result map[string]any) error {
 	return nil
 }
 
-func (s *fakeStore) FailRun(ctx context.Context, runID string, errMsg string, requeue bool, backoff time.Duration) error {
+func (s *fakeStore) FailRun(ctx context.Context, lease store.Lease, errMsg string, requeue bool, backoff time.Duration) error {
 	return nil
 }
 
-func (s *fakeStore) MarkDead(ctx context.Context, runID string, reason string) error { return nil }
+func (s *fakeStore) MarkDead(ctx context.Context, lease store.Lease, reason string) error { return nil }
 
 func (s *fakeStore) ReclaimExpiredLeases(ctx context.Context) (int, error) { return 0, nil }
 

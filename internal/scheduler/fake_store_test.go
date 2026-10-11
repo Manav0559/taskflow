@@ -207,30 +207,30 @@ func (f *fakeStore) LeaseNextRun(ctx context.Context, workerID string, leaseDura
 	return nil, nil, nil
 }
 
-func (f *fakeStore) ExtendLease(ctx context.Context, runID string, workerID string, extend time.Duration) error {
+func (f *fakeStore) ExtendLease(ctx context.Context, lease store.Lease, extend time.Duration) error {
 	return nil
 }
 
-func (f *fakeStore) MarkRunning(ctx context.Context, runID string) error {
+func (f *fakeStore) MarkRunning(ctx context.Context, lease store.Lease) error {
 	return nil
 }
 
-func (f *fakeStore) CompleteRun(ctx context.Context, runID string, result map[string]any) error {
-	f.setRunStatus(runID, model.RunStatusSucceeded)
+func (f *fakeStore) CompleteRun(ctx context.Context, lease store.Lease, result map[string]any) error {
+	f.setRunStatus(lease.RunID, model.RunStatusSucceeded)
 	return nil
 }
 
-func (f *fakeStore) FailRun(ctx context.Context, runID string, errMsg string, requeue bool, backoff time.Duration) error {
+func (f *fakeStore) FailRun(ctx context.Context, lease store.Lease, errMsg string, requeue bool, backoff time.Duration) error {
 	if requeue {
-		f.setRunStatus(runID, model.RunStatusPending)
+		f.setRunStatus(lease.RunID, model.RunStatusPending)
 	} else {
-		f.setRunStatus(runID, model.RunStatusFailed)
+		f.setRunStatus(lease.RunID, model.RunStatusFailed)
 	}
 	return nil
 }
 
-func (f *fakeStore) MarkDead(ctx context.Context, runID string, reason string) error {
-	f.setRunStatus(runID, model.RunStatusDead)
+func (f *fakeStore) MarkDead(ctx context.Context, lease store.Lease, reason string) error {
+	f.setRunStatus(lease.RunID, model.RunStatusDead)
 	return nil
 }
 
