@@ -1,5 +1,9 @@
 # taskflow
 
+[![CI](https://github.com/Manav0559/taskflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Manav0559/taskflow/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Manav0559/taskflow/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Manav0559/taskflow/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 taskflow is a distributed job scheduler written in Go. Clients submit one-shot or
 cron-recurring jobs — optionally depending on other jobs to form a DAG — through a
 JWT-authenticated REST API. A leader-elected scheduler continuously promotes jobs that
@@ -38,9 +42,10 @@ and run the command below there.
 docker compose up --build
 ```
 
-This brings up Postgres, the `api`, `worker`, and `scheduler` binaries (each running
-migrations on startup), plus Prometheus (`:9093`) and Grafana (`:3000`). The API listens
-on `:8080`.
+This brings up Postgres (primary on `:5432`, streaming read replica on `:5434`), Redis,
+the `api`, `worker`, and `scheduler` binaries (each running migrations on startup), plus
+Prometheus (`:9093`), Grafana (`:3000`) and Jaeger (UI on `:16686`). The API listens on
+`:8080`.
 
 ### Getting a token
 
@@ -143,3 +148,21 @@ trade-offs), [docs/API.md](docs/API.md) (endpoint reference),
 [docs/VERIFICATION.md](docs/VERIFICATION.md) (real load test numbers, rate-limit
 enforcement, and a crash-recovery chaos test — not just claims), and
 [docs/DEVLOG.md](docs/DEVLOG.md) (how this was built).
+
+## Running the tests
+
+```bash
+go build ./...
+go vet ./...
+go test ./... -race
+```
+
+The tests in `integration/` need a real Postgres and are skipped unless `DATABASE_URL`
+is set (for example, `docker compose up -d postgres` and
+`DATABASE_URL=postgres://taskflow:taskflow@localhost:5432/taskflow?sslmode=disable`).
+CI runs the full suite, including the integration tests, against a Postgres service
+container.
+
+## License
+
+[MIT](LICENSE)
