@@ -100,7 +100,8 @@ Promotion (turning due jobs into `pending` runs) is done by one scheduler replic
 time. The leader holds a session-scoped Postgres advisory lock
 (`pg_try_advisory_lock(727433001)`) on a connection it keeps checked out of the pool.
 `Promoter.Run` calls `TryAcquire` on every tick before promoting. `TryAcquire` pings
-that connection first and drops leadership if the ping fails. If the leader process
+that connection first; if the ping fails it drops leadership, takes a fresh connection
+and tries the lock again. If the leader process
 dies or its connection is closed, Postgres releases the lock and the next replica to
 call `TryAcquire` takes over. The measured failover is recorded in
 [VERIFICATION.md](VERIFICATION.md#leader-election-failover).
