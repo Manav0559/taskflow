@@ -50,7 +50,7 @@ with (the docker-compose default is `dev-secret-change-me`) is accepted as
 `Authorization: Bearer <token>`; the token's subject/claims aren't checked against
 anything beyond signature and expiry. For local dev, mint one with the `api.MintToken`
 helper via a throwaway script inside the module (it needs to live under
-`github.com/manavsingla/taskflow` to import the `internal/api` package):
+`github.com/Manav0559/taskflow` to import the `internal/api` package):
 
 ```go
 // scripts/mint-token/main.go — delete after use, or keep it as a dev-only tool
@@ -60,7 +60,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/manavsingla/taskflow/internal/api"
+	"github.com/Manav0559/taskflow/internal/api"
 )
 
 func main() {
