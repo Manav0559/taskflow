@@ -290,3 +290,27 @@ func TestExecuteOne_LeaseLostDuringRenewalCancelsHandler(t *testing.T) {
 		t.Errorf("expected renewal to stop after the first ErrLeaseLost, got %d calls", len(fs.extendLeaseCalls))
 	}
 }
+
+// A transient (non-fencing) error from the final FailRun means the run never reached
+// 'failed', so MarkDead must not be attempted: its fenced SELECT would miss and the
+// miss would be misreported as a lost lease.
+func TestExecuteOne_FailRunTransientErrorSkipsMarkDead(t *testing.T) {
+	fs := newFakeStore()
+	fs.failRunErr = errors.New("connection reset")
+	p := newTestPool(fs)
+	p.RegisterHandler("bad-job", func(ctx context.Context, job *model.Job, run *model.JobRun) (map[string]any, error) {
+		return nil, errors.New("boom")
+	})
+
+	job := &model.Job{ID: "job-1", Name: "bad-job", MaxAttempts: 1, TimeoutSeconds: 5}
+	run := &model.JobRun{ID: "run-1", JobID: "job-1", Attempt: 1}
+
+	p.executeOne(context.Background(), run, job)
+
+	if len(fs.failRunCalls) != 1 {
+		t.Fatalf("expected exactly one FailRun attempt, got %d", len(fs.failRunCalls))
+	}
+	if len(fs.markDeadCalls) != 0 {
+		t.Errorf("expected MarkDead to be skipped after FailRun error, got %d calls", len(fs.markDeadCalls))
+	}
+}

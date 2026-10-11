@@ -186,7 +186,19 @@ func (p *Pool) recordErr(span trace.Span, op string, err error, run *model.JobRu
 		return true
 	}
 	p.Logger.Error(op+" failed", "run_id", run.ID, "error", err)
+	span.SetStatus(codes.Error, op+" failed")
 	return false
+}
+
+// writeFailed reports whether a terminal store write did not land, logging it via
+// recordErr. The caller must then stop processing the run: the state the next step
+// (MarkDead, or the completion metrics) assumes was never written. After a transient
+// CompleteRun/FailRun error the run is still leased, so the janitor reclaims it once
+// the lease expires; after ErrLeaseLost it belongs to someone else. (A MarkDead
+// failure leaves the run 'failed'; see docs/correctness.md, Known gaps.)
+func (p *Pool) writeFailed(span trace.Span, op string, err error, run *model.JobRun, job *model.Job) bool {
+	p.recordErr(span, op, err, run, job)
+	return err != nil
 }
 
 func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job) {
@@ -206,10 +218,10 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 
 	if !ok {
 		msg := "no handler registered for job: " + job.Name
-		if p.recordErr(span, "fail run", p.Store.FailRun(ctx, lease, msg, false, 0), run, job) {
+		if p.writeFailed(span, "fail run", p.Store.FailRun(ctx, lease, msg, false, 0), run, job) {
 			return
 		}
-		if p.recordErr(span, "mark dead", p.Store.MarkDead(ctx, lease, "no handler"), run, job) {
+		if p.writeFailed(span, "mark dead", p.Store.MarkDead(ctx, lease, "no handler"), run, job) {
 			return
 		}
 		metrics.RunsCompleted.WithLabelValues("dead").Inc()
@@ -258,7 +270,7 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 	}
 
 	if err == nil {
-		if p.recordErr(span, "complete run", p.Store.CompleteRun(ctx, lease, result), run, job) {
+		if p.writeFailed(span, "complete run", p.Store.CompleteRun(ctx, lease, result), run, job) {
 			return
 		}
 		metrics.RunsCompleted.WithLabelValues("succeeded").Inc()
@@ -276,7 +288,7 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		if backoff > maxBackoff {
 			backoff = maxBackoff
 		}
-		if p.recordErr(span, "fail run", p.Store.FailRun(ctx, lease, err.Error(), true, backoff), run, job) {
+		if p.writeFailed(span, "fail run", p.Store.FailRun(ctx, lease, err.Error(), true, backoff), run, job) {
 			return
 		}
 		metrics.RunsCompleted.WithLabelValues("failed").Inc()
@@ -287,10 +299,10 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 		return
 	}
 
-	if p.recordErr(span, "fail run", p.Store.FailRun(ctx, lease, err.Error(), false, 0), run, job) {
+	if p.writeFailed(span, "fail run", p.Store.FailRun(ctx, lease, err.Error(), false, 0), run, job) {
 		return
 	}
-	if p.recordErr(span, "mark dead", p.Store.MarkDead(ctx, lease, "max attempts exceeded"), run, job) {
+	if p.writeFailed(span, "mark dead", p.Store.MarkDead(ctx, lease, "max attempts exceeded"), run, job) {
 		return
 	}
 	metrics.RunsCompleted.WithLabelValues("dead").Inc()
