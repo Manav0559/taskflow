@@ -73,6 +73,11 @@ Walking it end to end:
    worker that died (or was killed) mid-execution, without requiring the dead worker to
    do anything.
 
+While a handler runs the worker renews its lease with `ExtendLease`, and every
+transition after `LeaseNextRun` is fenced by `(leased_by, attempt)`, so a worker whose
+lease was reclaimed cannot overwrite the new holder's result. See
+[correctness.md](correctness.md).
+
 ## Why Postgres as the queue, not Kafka/SQS
 
 taskflow reuses its transactional store as the job queue via the `SKIP LOCKED` pattern
@@ -177,8 +182,10 @@ concurrent creates with the same key) is caught by a unique constraint on
 On the execution side, the attempt-based retry/backoff loop guarantees a run is not
 silently duplicated by taskflow's own machinery: `LeaseNextRun` increments `attempt`
 atomically as part of the same transaction that claims the row, so a crash between
-claiming and executing can only be reclaimed by the janitor after the lease expires, not
-run concurrently by two workers.
+claiming and executing can only be reclaimed by the janitor after the lease expires.
+A worker that is slow rather than dead can still be running when its run is reclaimed
+and re-leased; its later writes are rejected by lease fencing
+([correctness.md](correctness.md)), but its side effects are not undone.
 
 None of this makes job execution exactly-once. taskflow guarantees **at-least-once**
 execution: a worker can lease a run, start executing a handler with real side effects,
