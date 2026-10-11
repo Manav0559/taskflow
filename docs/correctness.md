@@ -86,6 +86,11 @@ It does not retry the write, which would fail the same way, and it does not fall
 through to `FailRun`/`MarkDead`. If renewal is what discovers the loss, the handler's
 context is cancelled and no result is written.
 
+Any other error from `CompleteRun` or `FailRun` (a database blip, for example) is logged
+and the worker also stops there: it does not call `MarkDead` after a `FailRun` that did
+not land, and it does not count the run as finished. The run is still leased, so the
+janitor reclaims it once the lease expires.
+
 ### What fencing does not cover
 
 Fencing protects the `job_runs` row. It does not undo side effects a stale handler has
