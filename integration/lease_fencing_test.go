@@ -3,6 +3,8 @@ package integration
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"math"
 	"os"
 	"testing"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/manavsingla/taskflow/internal/model"
 	"github.com/manavsingla/taskflow/internal/store"
+	"github.com/manavsingla/taskflow/internal/worker"
 )
 
 // shortLease is long enough for the test's own writes to land inside it but short
@@ -253,5 +256,46 @@ func TestFencedFailThenMarkDead(t *testing.T) {
 	}
 	if final.Status != model.RunStatusDead {
 		t.Errorf("status = %s, want dead", final.Status)
+	}
+}
+
+// TestLongHandlerKeepsLeaseViaRenewal runs a real worker pool whose handler takes
+// several lease durations, with the janitor running throughout. Lease renewal must
+// keep the run from being reclaimed: it succeeds on its first attempt.
+func TestLongHandlerKeepsLeaseViaRenewal(t *testing.T) {
+	ctx, st := openStore(t)
+	created := newLeasableRun(t, ctx, st)
+	job, err := st.GetJob(ctx, created.JobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// Janitor runs every 5*50ms = 250ms; the lease is 300ms; the handler takes ~4 leases.
+	pool := worker.NewPool(st, "renewing-worker", 1, shortLease, 50*time.Millisecond, log)
+	pool.RegisterHandler(job.Name, func(ctx context.Context, job *model.Job, run *model.JobRun) (map[string]any, error) {
+		select {
+		case <-time.After(4 * shortLease):
+			return map[string]any{"slow": true}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+
+	workerCtx, workerCancel := context.WithTimeout(ctx, 10*time.Second)
+	done := make(chan error, 1)
+	go func() { done <- pool.Run(workerCtx) }()
+
+	status := waitForTerminalRun(t, ctx, st, job.ID, 8*time.Second)
+	workerCancel()
+	<-done
+
+	final, err := st.GetRun(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if status != model.RunStatusSucceeded || final.Attempt != 1 {
+		t.Fatalf("run = status %s attempt %d, want succeeded on attempt 1 (lease should never have been reclaimed)",
+			status, final.Attempt)
 	}
 }

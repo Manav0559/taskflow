@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/manavsingla/taskflow/internal/model"
 	"github.com/manavsingla/taskflow/internal/store"
@@ -222,5 +223,70 @@ func TestExecuteOne_FailLeaseLostSkipsMarkDead(t *testing.T) {
 	}
 	if len(fs.markDeadCalls) != 0 {
 		t.Errorf("expected MarkDead to be skipped after lease lost, got %d calls", len(fs.markDeadCalls))
+	}
+}
+
+func TestExecuteOne_RenewsLeaseWhileHandlerRuns(t *testing.T) {
+	fs := newFakeStore()
+	p := NewPool(fs, "test-worker", 1, 30*time.Millisecond, 0, testLogger())
+	p.RegisterHandler("slow-job", func(ctx context.Context, job *model.Job, run *model.JobRun) (map[string]any, error) {
+		time.Sleep(150 * time.Millisecond) // several lease durations
+		return map[string]any{"done": true}, nil
+	})
+
+	job := &model.Job{ID: "job-1", Name: "slow-job", MaxAttempts: 3, TimeoutSeconds: 5}
+	run := &model.JobRun{ID: "run-1", JobID: "job-1", Attempt: 1}
+
+	p.executeOne(context.Background(), run, job)
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if len(fs.extendLeaseCalls) == 0 {
+		t.Fatal("expected ExtendLease to be called while the handler ran")
+	}
+	want := store.Lease{RunID: "run-1", WorkerID: "test-worker", Attempt: 1}
+	for _, l := range fs.extendLeaseCalls {
+		if l != want {
+			t.Errorf("ExtendLease lease = %+v, want %+v", l, want)
+		}
+	}
+	if len(fs.completeRunCalls) != 1 {
+		t.Errorf("expected CompleteRun once, got %d", len(fs.completeRunCalls))
+	}
+}
+
+func TestExecuteOne_LeaseLostDuringRenewalCancelsHandler(t *testing.T) {
+	fs := newFakeStore()
+	fs.extendLeaseErr = store.ErrLeaseLost
+	p := NewPool(fs, "test-worker", 1, 30*time.Millisecond, 0, testLogger())
+
+	cancelled := make(chan struct{})
+	p.RegisterHandler("slow-job", func(ctx context.Context, job *model.Job, run *model.JobRun) (map[string]any, error) {
+		select {
+		case <-ctx.Done():
+			close(cancelled)
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+			return map[string]any{"done": true}, nil
+		}
+	})
+
+	job := &model.Job{ID: "job-1", Name: "slow-job", MaxAttempts: 3, TimeoutSeconds: 5}
+	run := &model.JobRun{ID: "run-1", JobID: "job-1", Attempt: 1}
+
+	p.executeOne(context.Background(), run, job)
+
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("expected the handler's context to be cancelled after the lease was lost")
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if n := len(fs.completeRunCalls) + len(fs.failRunCalls) + len(fs.markDeadCalls); n != 0 {
+		t.Errorf("expected no result writes after lease lost, got %d", n)
+	}
+	if len(fs.extendLeaseCalls) != 1 {
+		t.Errorf("expected renewal to stop after the first ErrLeaseLost, got %d calls", len(fs.extendLeaseCalls))
 	}
 }

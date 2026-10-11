@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -125,6 +126,44 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// renewLease extends the lease every LeaseDuration/3 until stop is closed or runCtx
+// ends. It deliberately stops renewing once runCtx is done (job timeout): a handler
+// that ignores cancellation then loses its lease after one more LeaseDuration and the
+// run is reclaimed, instead of being held forever. On ErrLeaseLost it sets lost and
+// cancels the handler's context.
+func (p *Pool) renewLease(runCtx context.Context, cancel context.CancelFunc, stop <-chan struct{}, lease store.Lease, lost *atomic.Bool) {
+	interval := p.LeaseDuration / 3
+	if interval <= 0 {
+		interval = p.LeaseDuration
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-runCtx.Done():
+			return
+		case <-ticker.C:
+			err := p.Store.ExtendLease(runCtx, lease, p.LeaseDuration)
+			switch {
+			case err == nil:
+			case errors.Is(err, store.ErrLeaseLost):
+				lost.Store(true)
+				cancel()
+				return
+			case runCtx.Err() != nil:
+				return
+			default:
+				// Transient (e.g. DB blip): keep the handler running and try again on the
+				// next tick; the lease has two more intervals before it expires.
+				p.Logger.Warn("extend lease failed", "run_id", lease.RunID, "error", err)
+			}
+		}
+	}
+}
+
 // leaseLost logs and counts a fenced write that was rejected because this worker no
 // longer holds the run's lease. The run belongs to whoever holds the current lease
 // (or is pending again), so the only correct action is to drop it: retrying would
@@ -188,9 +227,29 @@ func (p *Pool) executeOne(ctx context.Context, run *model.JobRun, job *model.Job
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(job.TimeoutSeconds)*time.Second)
 	defer cancel()
 
+	// Keep the lease alive while the handler runs. If renewal discovers the lease is
+	// gone, the handler's context is cancelled and nothing more is written.
+	stopRenew := make(chan struct{})
+	var renewWG sync.WaitGroup
+	var lost atomic.Bool
+	if p.LeaseDuration > 0 {
+		renewWG.Add(1)
+		go func() {
+			defer renewWG.Done()
+			p.renewLease(runCtx, cancel, stopRenew, lease, &lost)
+		}()
+	}
+
 	start := time.Now()
 	result, err := h(runCtx, job, run)
 	metrics.RunDuration.Observe(time.Since(start).Seconds())
+
+	close(stopRenew)
+	renewWG.Wait()
+	if lost.Load() {
+		p.leaseLost(span, "extend lease", run, job)
+		return
+	}
 
 	// Defensive: a handler that ignores ctx and returns nil error on a timed-out
 	// run should still be treated as a failure, not a success.
