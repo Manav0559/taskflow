@@ -41,7 +41,7 @@ jobs:
           go-version: "1.26.5"
       # v7 required for golangci-lint v2 (v6 only supports v1, which is built with a
       # Go toolchain too old for this project's go 1.26.5 in go.mod).
-      - uses: golangci/golangci-lint-action@v7
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
 
